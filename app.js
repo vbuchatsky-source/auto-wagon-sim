@@ -22,6 +22,8 @@ const I = {
     total:'סה״כ', tourNext:'הבא', tourPrev:'הקודם', tourClose:'סגור',
     hintOrbit:'גרור לסיבוב · גלגלת לזום · לחצן ימני להזזה',
     loadBom:'טוען BOM…',
+    mech:'מנגנון הנעה', mechClose:'סגור מנגנון',
+    foldWarn:'שים לב: לוחית תחתית מקבעת את הקיפול — או תושבות על רגלי הקסטר בלבד (שומר קיפול, פחות קשיחות).',
   },
   en: {
     start:'Start', tag:'Autonomous camping-wagon simulator — dual drivetrains, sensors, follow & navigate',
@@ -42,6 +44,8 @@ const I = {
     total:'Total', tourNext:'Next', tourPrev:'Prev', tourClose:'Close',
     hintOrbit:'Drag to orbit · scroll to zoom · right-drag to pan',
     loadBom:'Loading BOM…',
+    mech:'Drivetrain mechanism', mechClose:'Close mechanism',
+    foldWarn:'Note: undercarriage plate locks folding — or mount only on caster legs (keeps folding, less stiffness).',
   }
 };
 let lang = 'he';
@@ -58,6 +62,8 @@ const S = {
   running: false,
   tab: 'drive',
   tourIdx: -1,
+  mechView: false,
+  mechFocus: 'overview', // overview | motor | axle | wheelFL | wheelRL
 };
 
 /* ========== Scene ========== */
@@ -72,8 +78,8 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0e1013);
-scene.fog = new THREE.Fog(0x0e1013, 8, 28);
+scene.background = new THREE.Color(0xf4f5f7);
+scene.fog = new THREE.Fog(0xf4f5f7, 14, 40);
 
 const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.02, 80);
 camera.position.set(1.6, 1.1, 1.8);
@@ -85,31 +91,34 @@ controls.minDistance = 0.4;
 controls.maxDistance = 12;
 
 /* lights */
-const hemi = new THREE.HemisphereLight(0xb8c4d4, 0x1a140e, 0.55);
+const hemi = new THREE.HemisphereLight(0xffffff, 0xd8dce2, 0.85);
 scene.add(hemi);
-const key = new THREE.DirectionalLight(0xfff2e0, 1.35);
-key.position.set(3, 5, 2);
+const key = new THREE.DirectionalLight(0xfffaf0, 1.15);
+key.position.set(2.5, 6, 3);
 key.castShadow = true;
 key.shadow.mapSize.set(2048, 2048);
 key.shadow.camera.near = 0.5; key.shadow.camera.far = 20;
 key.shadow.camera.left = -4; key.shadow.camera.right = 4;
 key.shadow.camera.top = 4; key.shadow.camera.bottom = -4;
-key.shadow.bias = -0.0002;
+key.shadow.bias = -0.00015;
+key.shadow.radius = 2;
 scene.add(key);
-const fill = new THREE.DirectionalLight(0x8aa0c0, 0.35);
-fill.position.set(-3, 2, -2);
+const fill = new THREE.DirectionalLight(0xdde4f0, 0.45);
+fill.position.set(-4, 3, -2);
 scene.add(fill);
-const rim = new THREE.DirectionalLight(0xff9a40, 0.25);
-rim.position.set(0, 1.5, -3);
+const rim = new THREE.DirectionalLight(0xffe0c0, 0.3);
+rim.position.set(0, 2, -4);
 scene.add(rim);
+const soft = new THREE.AmbientLight(0xffffff, 0.25);
+scene.add(soft);
 
 /* ground */
-const groundMat = new THREE.MeshStandardMaterial({ color: 0x1a1d22, metalness: 0.05, roughness: 0.92 });
+const groundMat = new THREE.MeshStandardMaterial({ color: 0xe8eaee, metalness: 0.05, roughness: 0.88 });
 const ground = new THREE.Mesh(new THREE.CircleGeometry(20, 64), groundMat);
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
-const grid = new THREE.GridHelper(16, 32, 0x2a3038, 0x1c2128);
+const grid = new THREE.GridHelper(16, 32, 0xb8bec8, 0xd0d4dc);
 grid.position.y = 0.002;
 scene.add(grid);
 
@@ -144,6 +153,9 @@ const groundClear = 0.10; // approx under tub
 const axleY = wheelR;
 const tubBottomY = axleY + 0.02; // approx
 const tubTopY = tubBottomY + Hz;
+const WHEEL_TRACK = Wy + 0.04;
+const WHEELBASE = Lx - 0.16;
+const SHAFT_D = 0.012; // Ø12 keyed axle
 
 const root = new THREE.Group();
 scene.add(root);
@@ -152,6 +164,7 @@ root.add(wagon);
 
 const labelDefs = []; // {id, he, en, obj, group}
 const parts = {}; // named groups for xray/cut/cfg
+const driveAnim = { sprocketMotor: null, sprocketAxle: null, chain: null, chainOffset: 0, gears: [], hubs: [] };
 
 function box(w, h, d, mat) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -291,65 +304,102 @@ function buildWagonBody() {
 
 /* Wheels */
 const wheelMeshes = [];
+
+/** Wheel hierarchy:
+ *  holder @ hub center
+ *    yawPivot (kingpin / caster yaw about +Y)
+ *      fork
+ *      spinGroup (rolls about local +Z = axle axis)
+ *        tire + visible tread lugs + hub
+ */
 function makeWheel() {
-  const g = new THREE.Group();
-  const tire = cyl(wheelR, wheelW * 0.92, M.rubber, 32);
-  tire.rotation.z = Math.PI/2;
-  g.add(tire);
-  // tread rings
-  for (let i = 0; i < 3; i++) {
-    const ring = cyl(wheelR + 0.002, 0.012, M.plasticBlk, 24);
-    ring.rotation.z = Math.PI/2;
-    ring.position.x = (i - 1) * 0.028;
-    g.add(ring);
+  const spin = new THREE.Group();
+  // Cylinder default axis = Y; rotate X so axle = Z (lateral)
+  const tire = cyl(wheelR, wheelW * 0.92, M.rubber, 36);
+  tire.rotation.x = Math.PI / 2;
+  spin.add(tire);
+  // Sidewall rings (do NOT use as spin markers — fixed on tire)
+  for (const side of [-1, 1]) {
+    const wall = cyl(wheelR * 0.72, 0.008, M.plasticBlk, 24);
+    wall.rotation.x = Math.PI / 2;
+    wall.position.z = side * (wheelW * 0.42);
+    spin.add(wall);
   }
-  const hub = cyl(0.028, wheelW * 0.5, M.steel, 16);
-  hub.rotation.z = Math.PI/2;
-  g.add(hub);
-  return g;
+  // Visible tread lugs around circumference — show rotation clearly
+  const lugMat = new THREE.MeshStandardMaterial({ color: 0x2a2c30, roughness: 0.95 });
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * Math.PI * 2;
+    const lug = box(0.022, 0.014, 0.028, lugMat);
+    lug.position.set(Math.sin(a) * (wheelR - 0.004), Math.cos(a) * (wheelR - 0.004), 0);
+    lug.rotation.z = -a;
+    spin.add(lug);
+  }
+  // Orange paint mark on sidewall for visual spin reference
+  const mark = box(0.01, 0.04, 0.006, M.accent);
+  mark.position.set(0, wheelR * 0.55, wheelW * 0.48);
+  spin.add(mark);
+  const hub = cyl(0.028, wheelW * 0.45, M.steel, 16);
+  hub.rotation.x = Math.PI / 2;
+  spin.add(hub);
+  // Hex adapter / keyed hub face
+  const hex = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.012, 6), M.steel);
+  hex.rotation.x = Math.PI / 2;
+  hex.position.z = wheelW * 0.28;
+  spin.add(hex);
+  return spin;
 }
 function makeFork() {
   const g = new THREE.Group();
-  const u = box(0.04, 0.06, wheelW + 0.04, M.aluBrown);
-  u.position.y = 0.02;
+  const u = box(0.04, 0.055, wheelW + 0.045, M.aluBrown);
+  u.position.y = 0.028;
   g.add(u);
-  const legL = box(0.018, 0.07, 0.014, M.aluBrown);
-  legL.position.set(0, -0.02, wheelW/2 + 0.005);
+  const legL = box(0.016, 0.075, 0.014, M.aluBrown);
+  legL.position.set(0, -0.015, wheelW / 2 + 0.008);
   g.add(legL);
-  const legR = box(0.018, 0.07, 0.014, M.aluBrown);
-  legR.position.set(0, -0.02, -wheelW/2 - 0.005);
+  const legR = box(0.016, 0.075, 0.014, M.aluBrown);
+  legR.position.set(0, -0.015, -wheelW / 2 - 0.008);
   g.add(legR);
+  // Flanged bearing housings on legs (UCFL-style schematic)
+  for (const zs of [wheelW / 2 + 0.008, -wheelW / 2 - 0.008]) {
+    const brg = cyl(0.014, 0.012, M.steel, 12);
+    brg.rotation.x = Math.PI / 2;
+    brg.position.set(0, 0, zs);
+    g.add(brg);
+  }
   return g;
 }
 
 function buildWheels() {
   const wg = new THREE.Group();
   const positions = [
-    { id: 'FL', x:  Lx/2 - 0.08, z:  Wy/2 + 0.02, caster: true },
-    { id: 'FR', x:  Lx/2 - 0.08, z: -Wy/2 - 0.02, caster: true },
-    { id: 'RL', x: -Lx/2 + 0.08, z:  Wy/2 + 0.02, caster: false },
-    { id: 'RR', x: -Lx/2 + 0.08, z: -Wy/2 - 0.02, caster: false },
+    { id: 'FL', x:  Lx / 2 - 0.08, z:  Wy / 2 + 0.02, caster: true, side: 1 },
+    { id: 'FR', x:  Lx / 2 - 0.08, z: -Wy / 2 - 0.02, caster: true, side: -1 },
+    { id: 'RL', x: -Lx / 2 + 0.08, z:  Wy / 2 + 0.02, caster: false, side: 1 },
+    { id: 'RR', x: -Lx / 2 + 0.08, z: -Wy / 2 - 0.02, caster: false, side: -1 },
   ];
   positions.forEach(p => {
     const holder = new THREE.Group();
     holder.position.set(p.x, axleY, p.z);
+    const yawPivot = new THREE.Group();
+    holder.add(yawPivot);
     const fork = makeFork();
-    holder.add(fork);
-    const wh = makeWheel();
-    holder.add(wh);
+    yawPivot.add(fork);
+    const spin = makeWheel();
+    yawPivot.add(spin);
     if (p.caster) {
-      // caster swivel
-      const swivel = cyl(0.018, 0.025, M.plasticBlk, 12);
+      const swivel = cyl(0.018, 0.022, M.plasticBlk, 12);
       swivel.position.y = 0.055;
-      holder.add(swivel);
-      // brake tab
+      yawPivot.add(swivel);
       const br = box(0.03, 0.012, 0.04, M.plasticBlk);
       br.position.set(0.02, -0.02, 0);
-      holder.add(br);
+      yawPivot.add(br);
     }
     wg.add(holder);
-    wheelMeshes.push({ id: p.id, holder, wheel: wh, caster: p.caster, zSign: Math.sign(p.z) });
-    addLabel('wheel_'+p.id, 'גלגל '+p.id, 'Wheel '+p.id, wh);
+    wheelMeshes.push({
+      id: p.id, holder, yawPivot, wheel: spin, caster: p.caster,
+      side: p.side, x: p.x, z: p.z, spinAngle: 0, steerAngle: 0, omega: 0
+    });
+    addLabel('wheel_' + p.id, 'גלגל ' + p.id, 'Wheel ' + p.id, spin);
   });
   wagon.add(wg);
   parts.wheels = wg;
@@ -364,120 +414,258 @@ function buildBasePlate() {
   addLabel('plate', 'לוחית הרכבה', 'Mounting plate', plate);
 }
 
-/* ========== Drivetrain A: single motor + diff + chain + Ackermann ========== */
+function makeSprocket(teeth, pitchR, thick, mat) {
+  const g = new THREE.Group();
+  const disc = cyl(pitchR * 0.85, thick, mat, Math.max(16, teeth));
+  disc.rotation.x = Math.PI / 2;
+  g.add(disc);
+  for (let i = 0; i < teeth; i++) {
+    const a = (i / teeth) * Math.PI * 2;
+    const t = box(0.006, 0.01, thick * 0.9, mat);
+    t.position.set(Math.sin(a) * pitchR, Math.cos(a) * pitchR, 0);
+    t.rotation.z = -a;
+    g.add(t);
+  }
+  const bore = cyl(SHAFT_D * 0.55, thick + 0.004, M.steel, 10);
+  bore.rotation.x = Math.PI / 2;
+  g.add(bore);
+  g.userData.teeth = teeth;
+  g.userData.pitchR = pitchR;
+  return g;
+}
+
+function makePillowBlock(x, y, z, parent) {
+  const g = new THREE.Group();
+  const base = box(0.055, 0.012, 0.032, M.aluDark);
+  base.position.y = -0.02;
+  g.add(base);
+  const house = cyl(0.018, 0.022, M.steel, 14);
+  house.rotation.x = Math.PI / 2;
+  g.add(house);
+  // Bolt heads
+  for (const dx of [-0.018, 0.018]) {
+    const bolt = cyl(0.004, 0.01, M.steel, 8);
+    bolt.position.set(dx, -0.012, 0);
+    g.add(bolt);
+  }
+  g.position.set(x, y, z);
+  parent.add(g);
+  return g;
+}
+
+/* ========== Drivetrain A: motor→GB→sprocket→chain→axle + Ackermann ========== */
 function buildCfgA() {
   const g = new THREE.Group();
   g.name = 'cfgA';
+  const axleX = -Lx / 2 + 0.08;
+  const axleY0 = axleY;
 
-  // Rear axle
-  const axle = cyl(0.008, Wy + 0.08, M.steel, 12);
-  axle.rotation.z = Math.PI/2; // along Z? wait wheels are along Z offset, axle along Z
-  // Actually wagon length is X, width is Z. Axle should be along Z (width).
-  axle.rotation.set(0, 0, Math.PI/2); // cylinder default Y-up -> rotate to Z
-  // CylinderGeometry is Y-up. To align with Z: rotate X by PI/2
-  axle.rotation.set(Math.PI/2, 0, 0);
-  axle.position.set(-Lx/2 + 0.08, axleY, 0);
+  // Rear axle Ø12 through pillow blocks
+  const axle = cyl(SHAFT_D / 2, Wy + 0.12, M.steel, 14);
+  axle.rotation.x = Math.PI / 2;
+  axle.position.set(axleX, axleY0, 0);
   g.add(axle);
+  driveAnim.axleA = axle;
+  makePillowBlock(axleX, axleY0, Wy / 2 - 0.04, g);
+  makePillowBlock(axleX, axleY0, -Wy / 2 + 0.04, g);
+  addLabel('axle', 'ציר אחורי Ø12 + UCFL', 'Rear axle Ø12 + UCFL', axle);
 
-  // Differential housing center rear
-  const diff = box(0.09, 0.07, 0.11, M.motor);
-  diff.position.set(-Lx/2 + 0.08, axleY + 0.02, 0);
+  // Open differential housing (or explain one-wheel option)
+  const diff = box(0.10, 0.075, 0.12, M.motor);
+  diff.position.set(axleX, axleY0 + 0.015, 0);
   g.add(diff);
-  addLabel('diff', 'דיפרנציאל', 'Differential', diff);
+  // Internal bevel hint (visible in xray/section)
+  const bevel = cyl(0.028, 0.02, M.steel, 16);
+  bevel.rotation.x = Math.PI / 2;
+  bevel.position.set(axleX, axleY0 + 0.015, 0);
+  g.add(bevel);
+  addLabel('diff', 'דיפרנציאל פתוח', 'Open differential', diff);
 
-  // Chain sprocket + chain (schematic torus + boxes)
-  const sprocket = cyl(0.035, 0.012, M.steel, 20);
-  sprocket.rotation.x = Math.PI/2;
-  sprocket.position.set(-Lx/2 + 0.08, axleY + 0.02, 0.08);
-  g.add(sprocket);
+  // Axle sprocket (#25, 42T schematic)
+  const sprocketAxle = makeSprocket(42, 0.048, 0.012, M.steel);
+  sprocketAxle.position.set(axleX, axleY0, 0.10);
+  g.add(sprocketAxle);
+  driveAnim.sprocketAxle = sprocketAxle;
+  addLabel('sprocketA', 'גלגל שיניים 42T #25', 'Sprocket 42T #25', sprocketAxle);
 
-  // Motor + gearbox beside
-  const motor = cyl(0.038, 0.12, M.motor, 20);
-  motor.rotation.x = Math.PI/2;
-  motor.position.set(-0.18, tubBottomY - 0.05, 0.12);
-  const mBand = cyl(0.04, 0.015, M.accent, 20);
-  mBand.rotation.x = Math.PI/2;
-  mBand.position.set(-0.18, tubBottomY - 0.05, 0.12);
-  g.add(mBand);
-  g.add(motor);
-  const gb = box(0.07, 0.055, 0.07, M.aluDark);
-  gb.position.set(-0.10, tubBottomY - 0.055, 0.12);
-  g.add(gb);
-  // motor shaft to sprocket
-  const mSprocket = cyl(0.02, 0.01, M.steel, 16);
-  mSprocket.rotation.x = Math.PI/2;
-  mSprocket.position.set(-0.10, tubBottomY - 0.055, 0.08);
-  g.add(mSprocket);
-  // chain (approximate loop as thin boxes)
-  const chain = new THREE.Mesh(
-    new THREE.TorusGeometry(0.07, 0.004, 8, 24),
-    M.steel
-  );
-  chain.rotation.y = Math.PI/2;
-  chain.position.set(-0.14, axleY + 0.01, 0.09);
-  chain.scale.set(1.4, 0.7, 1);
-  g.add(chain);
-  addLabel('motorA', 'מנוע + תיבה 250W', 'Motor + gearbox 250W', motor);
-
-  // Driver BTS7960
-  const drv = box(0.06, 0.018, 0.045, M.pcb);
-  drv.position.set(-0.05, tubBottomY - 0.048, 0.18);
-  g.add(drv);
-  addLabel('drvA', 'דרייבר BTS7960', 'Driver BTS7960', drv);
-
-  // Front Ackermann
-  const steerBar = cyl(0.006, Wy * 0.7, M.steel, 10);
-  steerBar.rotation.x = Math.PI/2;
-  steerBar.position.set(Lx/2 - 0.12, axleY + 0.04, 0);
-  g.add(steerBar);
-  const servo = box(0.05, 0.035, 0.025, M.accent);
-  servo.position.set(Lx/2 - 0.18, tubBottomY - 0.05, 0);
-  g.add(servo);
-  const horn = box(0.04, 0.008, 0.012, M.steel);
-  horn.position.set(Lx/2 - 0.15, tubBottomY - 0.045, 0);
-  g.add(horn);
-  addLabel('servo', 'סרבו הגה', 'Steering servo', servo);
-
-  // Link rods to front forks (schematic)
-  for (const zs of [Wy/2 + 0.02, -Wy/2 - 0.02]) {
-    const link = box(0.08, 0.008, 0.008, M.steel);
-    link.position.set(Lx/2 - 0.12, axleY + 0.04, zs * 0.5);
-    g.add(link);
+  // Motor mount bracket bolted to plate
+  const bracket = box(0.09, 0.05, 0.08, M.aluDark);
+  bracket.position.set(-0.12, tubBottomY - 0.055, 0.14);
+  g.add(bracket);
+  for (const [dx, dz] of [[-0.03, -0.025], [0.03, -0.025], [-0.03, 0.025], [0.03, 0.025]]) {
+    const bolt = cyl(0.004, 0.012, M.steel, 6);
+    bolt.position.set(-0.12 + dx, tubBottomY - 0.028, 0.14 + dz);
+    g.add(bolt);
   }
+  addLabel('mBracket', 'תושבת מנוע (ברגים M5)', 'Motor bracket (M5)', bracket);
+
+  // Geared motor body + gearbox
+  const motor = cyl(0.036, 0.11, M.motor, 20);
+  motor.rotation.x = Math.PI / 2;
+  motor.position.set(-0.20, tubBottomY - 0.055, 0.14);
+  g.add(motor);
+  const gb = box(0.075, 0.058, 0.072, M.aluBrown);
+  gb.position.set(-0.11, tubBottomY - 0.055, 0.14);
+  g.add(gb);
+  // Output shaft
+  const outShaft = cyl(SHAFT_D / 2, 0.04, M.steel, 10);
+  outShaft.rotation.x = Math.PI / 2;
+  outShaft.position.set(-0.11, tubBottomY - 0.055, 0.10);
+  g.add(outShaft);
+  addLabel('motorA', 'מנוע 24V 250W + תיבה 30:1', '24V 250W + GB 30:1', motor);
+
+  // Motor sprocket 14T
+  const sprocketMotor = makeSprocket(14, 0.018, 0.01, M.steel);
+  sprocketMotor.position.set(-0.11, tubBottomY - 0.055, 0.10);
+  g.add(sprocketMotor);
+  driveAnim.sprocketMotor = sprocketMotor;
+  addLabel('sprocketM', 'גלגל מנוע 14T', 'Motor sprocket 14T', sprocketMotor);
+
+  // Chain (#25) as linked boxes between sprocket centers + tensioner
+  const chainG = new THREE.Group();
+  const c0 = new THREE.Vector3(-0.11, tubBottomY - 0.055, 0.10);
+  const c1 = new THREE.Vector3(axleX, axleY0, 0.10);
+  const nLinks = 28;
+  driveAnim.chainLinks = [];
+  for (let i = 0; i < nLinks; i++) {
+    const t = i / nLinks;
+    // Ellipse-ish loop around both centers
+    const ang = t * Math.PI * 2;
+    const mid = c0.clone().lerp(c1, 0.5);
+    const along = c1.clone().sub(c0);
+    const len = along.length();
+    const ux = along.clone().normalize();
+    const uy = new THREE.Vector3(0, 1, 0);
+    const rx = len / 2 + 0.025;
+    const ry = 0.045;
+    const pos = mid.clone().add(ux.clone().multiplyScalar(Math.cos(ang) * rx)).add(uy.clone().multiplyScalar(Math.sin(ang) * ry));
+    const link = box(0.012, 0.006, 0.008, M.steel);
+    link.position.copy(pos);
+    chainG.add(link);
+    driveAnim.chainLinks.push({ mesh: link, ang0: ang, mid, ux, uy, rx, ry });
+  }
+  g.add(chainG);
+  driveAnim.chain = chainG;
+  addLabel('chain', 'שרשרת #25 + מותחן', 'Chain #25 + tensioner', chainG.children[0]);
+
+  // Tensioner idler
+  const tensArm = box(0.04, 0.008, 0.012, M.aluDark);
+  tensArm.position.set(-0.02, tubBottomY - 0.08, 0.10);
+  g.add(tensArm);
+  const idler = cyl(0.012, 0.01, M.plasticBlk, 12);
+  idler.rotation.x = Math.PI / 2;
+  idler.position.set(-0.005, tubBottomY - 0.09, 0.10);
+  g.add(idler);
+  driveAnim.idler = idler;
+
+  // Driver
+  const drv = box(0.06, 0.018, 0.045, M.pcb);
+  drv.position.set(-0.05, tubBottomY - 0.048, 0.20);
+  g.add(drv);
+  addLabel('drvA', 'BTS7960 43A', 'BTS7960 43A', drv);
+
+  // ---- Front Ackermann ----
+  const servo = box(0.055, 0.038, 0.028, M.accent);
+  servo.position.set(Lx / 2 - 0.20, tubBottomY - 0.048, 0);
+  g.add(servo);
+  const horn = box(0.045, 0.008, 0.014, M.steel);
+  horn.position.set(Lx / 2 - 0.165, tubBottomY - 0.042, 0);
+  g.add(horn);
+  driveAnim.servoHorn = horn;
+  addLabel('servo', 'סרבו 20kg·cm', 'Servo 20kg·cm', servo);
+
+  // Tie rod
+  const tie = cyl(0.005, Wy * 0.72, M.steel, 10);
+  tie.rotation.x = Math.PI / 2;
+  tie.position.set(Lx / 2 - 0.14, axleY0 + 0.035, 0);
+  g.add(tie);
+  driveAnim.tieRod = tie;
+  addLabel('tierod', 'מוט הגה (tie rod)', 'Tie rod', tie);
+
+  // Ackermann arms / kingpin stubs at front wheel holders (visual)
+  for (const zs of [Wy / 2 + 0.02, -Wy / 2 - 0.02]) {
+    const arm = box(0.05, 0.01, 0.012, M.steel);
+    arm.position.set(Lx / 2 - 0.12, axleY0 + 0.035, zs * 0.55);
+    g.add(arm);
+    const king = cyl(0.008, 0.04, M.steel, 10);
+    king.position.set(Lx / 2 - 0.08, axleY0 + 0.03, zs);
+    g.add(king);
+  }
+  addLabel('kingpin', 'קינגפין + זרוע Ackermann', 'Kingpin + Ackermann arm', g.children[g.children.length - 1]);
+
+  // Folding note plate
+  const foldNote = box(0.08, 0.002, 0.04, M.accent);
+  foldNote.position.set(-0.25, tubBottomY - 0.038, 0.18);
+  g.add(foldNote);
 
   wagon.add(g);
   parts.cfgA = g;
   return g;
 }
 
-/* ========== Drivetrain B: 4 hub motors ========== */
+/* ========== Drivetrain B: 4× geared/hub with bearing support ========== */
 function buildCfgB() {
   const g = new THREE.Group();
   g.name = 'cfgB';
+  driveAnim.hubs = [];
   const positions = [
-    { x: Lx/2 - 0.08, z: Wy/2 + 0.02 },
-    { x: Lx/2 - 0.08, z: -Wy/2 - 0.02 },
-    { x: -Lx/2 + 0.08, z: Wy/2 + 0.02 },
-    { x: -Lx/2 + 0.08, z: -Wy/2 - 0.02 },
+    { id: 'FL', x: Lx / 2 - 0.08, z: Wy / 2 + 0.02 },
+    { id: 'FR', x: Lx / 2 - 0.08, z: -Wy / 2 - 0.02 },
+    { id: 'RL', x: -Lx / 2 + 0.08, z: Wy / 2 + 0.02 },
+    { id: 'RR', x: -Lx / 2 + 0.08, z: -Wy / 2 - 0.02 },
   ];
   positions.forEach((p, i) => {
-    // hub motor disk inside wheel plane — clearly visible in X-RAY
-    const hub = cyl(0.048, 0.055, M.motor, 20);
-    hub.rotation.z = Math.PI/2;
-    hub.position.set(p.x, axleY, p.z);
-    g.add(hub);
-    const band = cyl(0.05, 0.012, M.accent, 20);
-    band.rotation.z = Math.PI/2;
+    const unit = new THREE.Group();
+    // Mount plate to folding leg / fork bracket
+    const mount = box(0.05, 0.04, 0.06, M.aluDark);
+    mount.position.set(p.x - 0.02, axleY + 0.02, p.z);
+    unit.add(mount);
+    // Geared motor body (inboard of wheel) — shaft not carrying radial tire load
+    const mot = cyl(0.028, 0.07, M.motor, 18);
+    mot.rotation.z = Math.PI / 2;
+    mot.position.set(p.x - 0.05, axleY, p.z);
+    unit.add(mot);
+    // Output D-shaft / hex
+    const shaft = cyl(0.006, 0.035, M.steel, 10);
+    shaft.rotation.z = Math.PI / 2;
+    shaft.position.set(p.x - 0.01, axleY, p.z);
+    unit.add(shaft);
+    // Coupler / hub adapter
+    const cpl = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.02, 6), M.steel);
+    cpl.rotation.z = Math.PI / 2;
+    cpl.position.set(p.x + 0.01, axleY, p.z);
+    unit.add(cpl);
+    // Bearing carrier (radial load path: wheel → bearing → bracket, not motor bearings)
+    const brgCarrier = box(0.03, 0.045, 0.045, M.aluBrown);
+    brgCarrier.position.set(p.x + 0.005, axleY + 0.005, p.z);
+    unit.add(brgCarrier);
+    const brg = cyl(0.016, 0.012, M.steel, 12);
+    brg.rotation.z = Math.PI / 2;
+    brg.position.set(p.x + 0.005, axleY, p.z);
+    unit.add(brg);
+    // Hub motor disk (outer, visible)
+    const hubDisk = cyl(0.048, 0.04, M.motor, 20);
+    hubDisk.rotation.z = Math.PI / 2;
+    hubDisk.position.set(p.x, axleY, p.z);
+    unit.add(hubDisk);
+    const band = cyl(0.05, 0.01, M.accent, 20);
+    band.rotation.z = Math.PI / 2;
     band.position.set(p.x, axleY, p.z);
-    g.add(band);
-    if (i === 0) addLabel('hub', 'מנוע רכזת 150W', 'Hub motor 150W', hub);
+    unit.add(band);
+    g.add(unit);
+    driveAnim.hubs.push({ unit, mot, hubDisk, band, id: p.id });
+    if (i === 0) {
+      addLabel('hub', 'מנוע+תושבת+מיסב 6204', 'Motor+bracket+6204 brg', hubDisk);
+      addLabel('couple', 'מחבר Hex / D-shaft', 'Hex / D-shaft coupler', cpl);
+      addLabel('brgB', 'מיסב נושא עומס רדיאלי', 'Radial load bearing', brg);
+    }
   });
-  // dual drivers
+  // Dual drivers
   for (let i = 0; i < 2; i++) {
     const drv = box(0.07, 0.018, 0.05, M.pcb);
     drv.position.set(-0.05 + i * 0.12, tubBottomY - 0.048, 0.16);
     g.add(drv);
-    if (i === 0) addLabel('drvB', 'דרייברים כפולים', 'Dual drivers', drv);
+    if (i === 0) addLabel('drvB', 'דרייברים כפולים MDD10A', 'Dual drivers MDD10A', drv);
   }
   wagon.add(g);
   parts.cfgB = g;
@@ -716,10 +904,12 @@ function applyCfg() {
   if (parts.cfgB) parts.cfgB.visible = S.cfg === 'B';
   // In config A front casters steer; in B all wheels fixed for skid
   wheelMeshes.forEach(w => {
-    if (w.caster) w.holder.rotation.y = 0;
+    if (w.yawPivot) w.yawPivot.rotation.y = 0;
+    w.steerAngle = 0;
   });
   syncLabels();
   renderPanel();
+  if (S.mechView) openMechView(S.cfg === 'A' ? 'motor' : 'hub');
   toast(S.cfg === 'A' ? T('cfgA') : T('cfgB'));
 }
 
@@ -776,8 +966,11 @@ function syncLabels() {
   labelsEl.innerHTML = '';
   labelDefs.forEach(d => {
     // skip cfg-specific when hidden
-    if (S.cfg === 'A' && (d.id === 'hub' || d.id === 'drvB')) return;
-    if (S.cfg === 'B' && (d.id === 'motorA' || d.id === 'diff' || d.id === 'drvA' || d.id === 'servo')) return;
+    const onlyA = ['hub','drvB','couple','brgB'];
+    const onlyB = ['motorA','diff','drvA','servo','axle','sprocketA','sprocketM','chain','mBracket','tierod','kingpin'];
+    // note: onlyA = hide when cfg A (these are B-only ids)
+    if (S.cfg === 'A' && ['hub','drvB','couple','brgB'].includes(d.id)) return;
+    if (S.cfg === 'B' && ['motorA','diff','drvA','servo','axle','sprocketA','sprocketM','chain','mBracket','tierod','kingpin'].includes(d.id)) return;
     if (!S.labels) return;
     const el = document.createElement('div');
     el.className = 'lbl';
@@ -848,8 +1041,8 @@ function showTourCard(d) {
 function tourStep(dir) {
   let idx = S.tourIdx;
   const avail = tourOrder.filter(id => {
-    if (S.cfg === 'A' && (id === 'hub' || id === 'drvB')) return false;
-    if (S.cfg === 'B' && (id === 'motorA' || id === 'diff' || id === 'servo' || id === 'drvA')) return false;
+    if (S.cfg === 'A' && ['hub','drvB','couple','brgB'].includes(id)) return false;
+    if (S.cfg === 'B' && ['motorA','diff','servo','drvA','axle','sprocketA','sprocketM','chain','mBracket','tierod','kingpin'].includes(id)) return false;
     return labelDefs.some(d => d.id === id);
   });
   if (idx < 0) idx = 0;
@@ -915,6 +1108,8 @@ function calcEngineering() {
 function simStep(dt) {
   if (!S.running) {
     wagonPose.v *= 0.9;
+    wagonPose.yawRate = (wagonPose.yawRate || 0) * 0.85;
+    wheelMeshes.forEach(wm => { wm.omega = wagonPose.v / wheelRadius; });
     updateWagonTransform(dt);
     return;
   }
@@ -977,27 +1172,67 @@ function simStep(dt) {
   while (dyaw > Math.PI) dyaw -= Math.PI * 2;
   while (dyaw < -Math.PI) dyaw += Math.PI * 2;
 
+  // Yaw rate / steer targets
+  let yawRate = 0; // rad/s
   if (S.cfg === 'A') {
-    // Ackermann: steer then drive
-    const steer = Math.max(-0.6, Math.min(0.6, dyaw));
+    const steer = Math.max(-0.55, Math.min(0.55, dyaw * 1.2));
     wagonPose.steer = steer;
-    wagonPose.yaw += steer * wagonPose.v * dt * 1.8;
-    wheelMeshes.forEach(w => {
-      if (w.caster) w.holder.rotation.y = steer * (w.zSign > 0 ? 1 : 1);
-    });
+    // Bicycle model: yawRate = v * tan(steer) / wheelbase
+    yawRate = wagonPose.v * Math.tan(steer) / Math.max(WHEELBASE, 0.3);
   } else {
-    // skid steer
-    wagonPose.yaw += Math.max(-1.5, Math.min(1.5, dyaw * 2.5)) * dt;
+    // Skid-steer: yaw from heading error
+    yawRate = Math.max(-2.0, Math.min(2.0, dyaw * 2.8));
     wagonPose.steer = 0;
   }
+  wagonPose.yawRate = yawRate;
 
   const a = (targetV - wagonPose.v) * 2.5;
   wagonPose.v += a * dt;
-  wagonPose.v = Math.max(-maxV * 0.4, Math.min(maxV, wagonPose.v));
+  wagonPose.v = Math.max(-maxV * 0.45, Math.min(maxV, wagonPose.v));
+  wagonPose.yaw += yawRate * dt;
 
   wagonPose.x += Math.cos(wagonPose.yaw) * wagonPose.v * dt;
   wagonPose.z += Math.sin(wagonPose.yaw) * wagonPose.v * dt;
   S.distM += Math.abs(wagonPose.v) * dt;
+
+  // Per-wheel ground speeds (body frame: +X forward, +Z left)
+  const halfT = WHEEL_TRACK / 2;
+  const v = wagonPose.v;
+  const wYaw = yawRate;
+  // v_y lateral ~ 0; point velocity = v_forward ± w*z
+  wagonPose.wheelSpeed = {};
+  wheelMeshes.forEach(wm => {
+    let vWheel;
+    if (S.cfg === 'B') {
+      // skid: each side speed
+      vWheel = v - wYaw * wm.z; // z>0 left → when yaw+, left slower if turning left? 
+      // yaw+ = CCW = toward +Z from +X → left side ( +z) moves backward relative → v - w*z with z>0 gives smaller/negative when w>0. Good for spin-in-place.
+    } else {
+      // Config A: rear driven via diff; front free-rolling along steered heading
+      if (!wm.caster) {
+        // differential: approximate with same yaw kinematics
+        vWheel = v - wYaw * wm.z;
+      } else {
+        // front: speed along wheel plane after Ackermann steer
+        const d = WHEELBASE;
+        let delta = 0;
+        if (Math.abs(Math.tan(wagonPose.steer)) > 1e-4) {
+          const R = d / Math.tan(wagonPose.steer);
+          // Ackermann: inner/outer
+          const sign = wm.side; // +1 left
+          delta = Math.atan(d / (R - sign * halfT));
+        } else {
+          delta = wagonPose.steer;
+        }
+        wm.steerAngle = delta;
+        vWheel = v / Math.cos(delta || 1e-6); // approx path speed
+        // better: v_wheel = yawRate * sqrt(R_i^2) ... use body velocity projected
+        vWheel = v - wYaw * wm.z;
+      }
+    }
+    wm.omega = vWheel / wheelRadius; // rad/s about axle
+    wagonPose.wheelSpeed[wm.id] = vWheel;
+  });
 
   // Battery drain
   const P = Math.abs(eng.P_elec) * (Math.abs(wagonPose.v) / Math.max(maxV, 0.1));
@@ -1011,15 +1246,77 @@ function simStep(dt) {
 function updateWagonTransform(dt) {
   root.position.x = wagonPose.x;
   root.position.z = wagonPose.z;
-  root.rotation.y = -wagonPose.yaw + Math.PI/2; // model forward was +X visually with handle at +X; yaw 0 -> +X
-  // Actually handle is at +X, so forward = +X, yaw measured from +X: rotation.y = -yaw
+  // Model forward = +X; yaw 0 → +X world; Three.js Y-up: rotation.y = -yaw
   root.rotation.y = -wagonPose.yaw;
 
-  // spin wheels
-  const w = wagonPose.v / wheelRadius;
+  // Wheel spin about axle (+Z local) and steer about kingpin (+Y)
   wheelMeshes.forEach(wm => {
-    wm.wheel.rotation.z -= w * dt; // wheel local
+    // Ensure omega exists even when idle coasting
+    if (wm.omega === undefined) wm.omega = wagonPose.v / wheelRadius;
+    wm.spinAngle = (wm.spinAngle || 0) + wm.omega * dt;
+    // Axle = local Z → spin about Z
+    wm.wheel.rotation.z = wm.spinAngle;
+
+    if (S.cfg === 'A' && wm.caster) {
+      // Ackermann / caster yaw about vertical
+      let delta = wm.steerAngle;
+      if (delta === undefined) {
+        const halfT = WHEEL_TRACK / 2;
+        const d = WHEELBASE;
+        if (Math.abs(wagonPose.steer) > 1e-4) {
+          const R = d / Math.tan(wagonPose.steer);
+          delta = Math.atan(d / (R - wm.side * halfT));
+        } else delta = 0;
+      }
+      wm.yawPivot.rotation.y = delta;
+    } else if (S.cfg === 'B') {
+      wm.yawPivot.rotation.y = 0; // skid: wheels fixed forward
+    } else {
+      // rear fixed in A
+      wm.yawPivot.rotation.y = 0;
+    }
   });
+
+  // Animate chain / sprockets (config A)
+  if (S.cfg === 'A' && parts.cfgA && parts.cfgA.visible) {
+    // Motor shaft speed: wheel omega * (teeth_axle / teeth_motor) / after gearbox visual on output
+    const rear = wheelMeshes.find(w => w.id === 'RL') || wheelMeshes[2];
+    const wAxle = rear ? rear.omega : 0;
+    const ratio = 42 / 14; // sprocket reduction after GB
+    const wMotorOut = wAxle * ratio; // output sprocket faster than axle
+    if (driveAnim.sprocketAxle) driveAnim.sprocketAxle.rotation.z = (driveAnim.sprocketAxle.rotation.z || 0) + wAxle * dt;
+    if (driveAnim.sprocketMotor) driveAnim.sprocketMotor.rotation.z = (driveAnim.sprocketMotor.rotation.z || 0) + wMotorOut * dt;
+    if (driveAnim.idler) driveAnim.idler.rotation.z += wMotorOut * 0.5 * dt;
+    if (driveAnim.axleA) driveAnim.axleA.rotation.z += wAxle * dt;
+    // Chain links orbit
+    if (driveAnim.chainLinks) {
+      const pitchR = 0.018;
+      const chainOmega = wMotorOut; // approx tangential match at motor sprocket
+      driveAnim.chainOffset = (driveAnim.chainOffset || 0) + chainOmega * dt;
+      driveAnim.chainLinks.forEach(L => {
+        const ang = L.ang0 + driveAnim.chainOffset;
+        L.mesh.position.copy(L.mid).add(L.ux.clone().multiplyScalar(Math.cos(ang) * L.rx)).add(L.uy.clone().multiplyScalar(Math.sin(ang) * L.ry));
+      });
+    }
+    if (driveAnim.servoHorn) {
+      driveAnim.servoHorn.rotation.y = wagonPose.steer * 0.8;
+    }
+  }
+  // Hub disks spin with wheels in B (cylinder axis = world-local X after z=PI/2 bake → spin about X)
+  if (S.cfg === 'B' && driveAnim.hubs) {
+    driveAnim.hubs.forEach(h => {
+      const wm = wheelMeshes.find(w => w.id === h.id);
+      if (!wm) return;
+      // Rebuild orientation: axle along X, then roll about X
+      if (h.hubDisk) {
+        h.hubDisk.rotation.set(wm.spinAngle, 0, Math.PI / 2);
+      }
+      if (h.band) {
+        h.band.rotation.set(wm.spinAngle, 0, Math.PI / 2);
+      }
+    });
+  }
+
   if (parts.lidarSpin) parts.lidarSpin.rotation.y += dt * 4;
 }
 
@@ -1182,8 +1479,8 @@ function drawWiring(svg) {
     html += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#ff7a1a" stroke-width="1.5" opacity="0.7"/>`;
   });
   boxes.forEach(([x,y,w,h,t]) => {
-    html += `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="6" fill="#1a1f27" stroke="#3a4050" stroke-width="1.2"/>
-      <text x="${x+w/2}" y="${y+h/2+4}" fill="#e8eaed" font-size="10" text-anchor="middle" font-family="system-ui">${t}</text>`;
+    html += `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="6" fill="#ffffff" stroke="#c0c6d0" stroke-width="1.2"/>
+      <text x="${x+w/2}" y="${y+h/2+4}" fill="#1a1d24" font-size="10" text-anchor="middle" font-family="system-ui">${t}</text>`;
   });
   svg.innerHTML = html;
 }
@@ -1222,6 +1519,88 @@ ${rows}
   a.click();
 }
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+
+/* ========== Mechanism close-up view ========== */
+const MECH_FOCI = {
+  overview: { he: 'סקירת מנגנון', en: 'Mechanism overview', pos: [1.1, 0.55, 0.9], tgt: [-0.1, 0.12, 0.05] },
+  motor: { he: 'מנוע + תיבה + שרשרת', en: 'Motor + GB + chain', pos: [0.15, 0.35, 0.55], tgt: [-0.14, 0.08, 0.12] },
+  axle: { he: 'ציר + דיפרנציאל + מיסבים', en: 'Axle + diff + bearings', pos: [-0.55, 0.35, 0.55], tgt: [-0.36, 0.09, 0] },
+  wheelFL: { he: 'גלגל קדמי + Ackermann', en: 'Front wheel + Ackermann', pos: [0.75, 0.35, 0.55], tgt: [0.36, 0.09, 0.28] },
+  hub: { he: 'מנוע רכזת + מיסב עומס', en: 'Hub motor + load bearing', pos: [0.7, 0.32, 0.55], tgt: [0.36, 0.09, 0.28] },
+};
+
+function mechStages() {
+  if (S.cfg === 'A') {
+    return [
+      { he: 'מנוע 24V ~250W', en: '24V ~250W motor', detail: L('מומנט יציאה אחרי תיבה', 'Gearbox output torque') + ': ×30' },
+      { he: 'תיבת הילוכים 30:1', en: 'Gearbox 30:1', detail: '≈200 rpm @ 24V no-load after GB' },
+      { he: 'שרשרת #25 · 14T→42T', en: 'Chain #25 · 14T→42T', detail: L('יחס', 'Ratio') + ' 3:1 · ' + L('מומנט נוסף ×3', 'extra torque ×3') },
+      { he: 'ציר Ø12 + UCFL/6204', en: 'Ø12 axle + UCFL/6204', detail: L('מיסבי אוגן נושאים עומס רדיאלי', 'Flange bearings take radial load') },
+      { he: 'דיפרנציאל פתוח', en: 'Open differential', detail: L('חלופה: הנעת גלגל אחד + freewheel בצד השני', 'Alt: one-wheel drive + freewheel other side') },
+      { he: 'היגוי Ackermann', en: 'Ackermann steering', detail: L('סרבו → horn → tie-rod → זרועות קינגפין', 'Servo → horn → tie-rod → kingpin arms') },
+    ];
+  }
+  return [
+    { he: '4× מנוע ממוכפל/רכזת 150W', en: '4× 150W geared/hub', detail: L('שליטה שמאל/ימין ל-skid-steer', 'L/R control for skid-steer') },
+    { he: 'תושבת לרגל הקסטר', en: 'Mount to caster leg', detail: L('ברגים M5 לתושבת החום שבתמונה', 'M5 into photo bracket') },
+    { he: 'מיסב 6204 נושא עומס', en: '6204 load bearing', detail: L('ציר המנוע לא נושא עומס רדיאלי של הגלגל', 'Motor shaft does not carry tire radial load') },
+    { he: 'מחבר Hex / D-shaft', en: 'Hex / D-shaft coupler', detail: L('בורג לחץ + דבק חוזק', 'Set screw + Loctite') },
+    { he: 'דרייברים כפולים', en: 'Dual drivers', detail: '2× MDD10A / BTS7960' },
+  ];
+}
+
+function openMechView(focus) {
+  S.mechView = true;
+  S.mechFocus = focus || (S.cfg === 'A' ? 'motor' : 'hub');
+  S.xray = true; applyXray();
+  document.getElementById('bXray').classList.add('on');
+  document.getElementById('bMech').classList.add('on');
+  const f = MECH_FOCI[S.mechFocus] || MECH_FOCI.overview;
+  camera.position.set(...f.pos);
+  controls.target.set(...f.tgt);
+  controls.update();
+  renderMechPanel();
+  toast(T('mech'));
+}
+
+function renderMechPanel() {
+  const el = document.getElementById('mechPanel');
+  if (!S.mechView) { el.classList.remove('show'); return; }
+  el.classList.add('show');
+  const e = calcEngineering();
+  const stages = mechStages();
+  const fociBtns = Object.keys(MECH_FOCI).filter(k => {
+    if (S.cfg === 'B' && (k === 'motor' || k === 'axle' || k === 'wheelFL')) return false;
+    if (S.cfg === 'A' && k === 'hub') return false;
+    return true;
+  }).map(k => `<button class="btn ${S.mechFocus===k?'primary':''}" data-f="${k}">${lang==='he'?MECH_FOCI[k].he:MECH_FOCI[k].en}</button>`).join(' ');
+  el.innerHTML = `
+    <h3>⚙ ${T('mech')} — ${S.cfg}</h3>
+    <div class="note">${L('תקריב הנדסי — חלקים מוצעים לבנייה','Buildable close-up — suggested parts')}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:4px;margin:8px 0">${fociBtns}</div>
+    ${stages.map(st => `<div class="stage"><b>${lang==='he'?st.he:st.en}</b><br>${st.detail}</div>`).join('')}
+    <div class="stage"><b>${L('מומנט גלגל דרוש','Req. wheel torque')}</b><br>${e.T_need.toFixed(2)} N·m ${T('perMotor')} · ${e.P_need.toFixed(0)} W</div>
+    <div class="stage"><b>${L('קיפול העגלה','Folding')}</b><br>${T('foldWarn')}</div>
+    <button class="btn block" id="bMechCut">${T('cut')}</button>
+    <button class="btn ghost block" id="bMechClose">${T('mechClose')}</button>
+  `;
+  el.querySelectorAll('[data-f]').forEach(b => b.onclick = () => openMechView(b.dataset.f));
+  document.getElementById('bMechClose').onclick = closeMechView;
+  document.getElementById('bMechCut').onclick = () => {
+    S.cut = !S.cut; applyCut();
+    document.getElementById('bCut').classList.toggle('on', S.cut);
+  };
+}
+
+function closeMechView() {
+  S.mechView = false;
+  document.getElementById('mechPanel').classList.remove('show');
+  document.getElementById('bMech').classList.remove('on');
+  camera.position.set(1.6, 1.1, 1.8);
+  controls.target.set(0, 0.25, 0);
+  controls.update();
+}
 
 /* ========== Toast / i18n UI ========== */
 let toastTimer;
@@ -1290,6 +1669,10 @@ document.getElementById('bLabels').onclick = () => {
   syncLabels();
 };
 document.getElementById('bTour').onclick = startTour;
+document.getElementById('bMech').onclick = () => {
+  if (S.mechView) closeMechView();
+  else openMechView(S.cfg === 'A' ? 'motor' : 'hub');
+};
 document.getElementById('bMenu').onclick = () => {
   document.getElementById('panel').classList.toggle('open');
 };
@@ -1330,5 +1713,5 @@ updateDash();
 requestAnimationFrame(frame);
 
 // Expose for headless tests / screenshots
-window.__AW = { S, wagonPose, applyCfg, applyXray, applyCut, startTour, calcEngineering, addObstacle, scene, camera, renderer, controls, parts, setMode: (m) => { S.mode = m; S.running = m !== 'idle'; } };
+window.__AW = { S, wagonPose, applyCfg, applyXray, applyCut, startTour, calcEngineering, addObstacle, scene, camera, renderer, controls, parts, wheelMeshes, driveAnim, openMechView, closeMechView, setMode: (m) => { S.mode = m; S.running = m !== 'idle'; } };
 console.info('AutoWagon ready');
