@@ -55,7 +55,7 @@ const T = (k) => I[lang][k] || I.he[k] || k;
 /* ========== State ========== */
 const S = {
   cfg: 'A', // A | B
-  xray: false, cut: false, labels: true, hq: false,
+  xray: false, cut: false, labels: false, hq: false,
   payload: 25, slope: 5, maxSpd: 1.2, simMul: 1,
   mode: 'idle', // idle | follow | way | avoid
   batt: 100, distM: 0,
@@ -1052,6 +1052,7 @@ function tourStep(dir) {
   if (d) { focusPart(d); }
 }
 function startTour() {
+  setLabels(true);
   S.tourIdx = 0;
   const avail = tourOrder.filter(id => labelDefs.some(d => d.id === id));
   const d = labelDefs.find(x => x.id === avail[0]);
@@ -1622,6 +1623,8 @@ function applyLang() {
   document.getElementById('bLang2').textContent = lang === 'he' ? 'English' : 'עברית';
   document.getElementById('bXray').textContent = T('xray');
   document.getElementById('bCut').textContent = T('cut');
+  document.getElementById('bLabels').textContent = '🏷 ' + T('labels');
+  document.getElementById('bLabels').classList.toggle('on', S.labels);
   document.getElementById('dkSpd').textContent = T('spd');
   document.getElementById('dkBatt').textContent = T('batt');
   document.getElementById('dkRange').textContent = T('range');
@@ -1663,11 +1666,26 @@ document.getElementById('bCut').onclick = () => {
   document.getElementById('bCut').classList.toggle('on', S.cut);
   applyCut();
 };
-document.getElementById('bLabels').onclick = () => {
-  S.labels = !S.labels;
-  document.getElementById('bLabels').classList.toggle('on', S.labels);
+function setLabels(on) {
+  S.labels = !!on;
+  const b = document.getElementById('bLabels');
+  b.classList.toggle('on', S.labels);
+  b.textContent = '🏷 ' + T('labels');
   syncLabels();
+  updateLabelPositions();
+}
+document.getElementById('bLabels').onclick = () => {
+  setLabels(!S.labels);
+  toast(S.labels ? ('🏷 ' + T('labels') + ' ON') : ('🏷 ' + T('labels') + ' OFF'));
 };
+addEventListener('keydown', (e) => {
+  if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+  if (e.key === 'l' || e.key === 'L' || e.code === 'KeyL') {
+    e.preventDefault();
+    setLabels(!S.labels);
+    toast(S.labels ? ('🏷 ' + T('labels') + ' ON') : ('🏷 ' + T('labels') + ' OFF'));
+  }
+});
 document.getElementById('bTour').onclick = startTour;
 document.getElementById('bMech').onclick = () => {
   if (S.mechView) closeMechView();
@@ -1707,11 +1725,11 @@ function frame(now) {
 await loadBom();
 applyCfg();
 applyLang();
-document.getElementById('bLabels').classList.add('on');
+setLabels(false);
 syncLabels();
 updateDash();
 requestAnimationFrame(frame);
 
 // Expose for headless tests / screenshots
-window.__AW = { S, wagonPose, applyCfg, applyXray, applyCut, startTour, calcEngineering, addObstacle, scene, camera, renderer, controls, parts, wheelMeshes, driveAnim, openMechView, closeMechView, setMode: (m) => { S.mode = m; S.running = m !== 'idle'; } };
+window.__AW = { S, wagonPose, applyCfg, applyXray, applyCut, startTour, calcEngineering, addObstacle, scene, camera, renderer, controls, parts, wheelMeshes, driveAnim, openMechView, closeMechView, setLabels, syncLabels, setMode: (m) => { S.mode = m; S.running = m !== 'idle'; } };
 console.info('AutoWagon ready');
