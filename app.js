@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 /* ========== i18n ========== */
 const I = {
@@ -76,7 +77,7 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
 renderer.setSize(innerWidth, innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 1.32;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -93,10 +94,10 @@ controls.maxPolarAngle = Math.PI * 0.49;
 controls.minDistance = 0.4;
 controls.maxDistance = 12;
 
-/* lights */
-const hemi = new THREE.HemisphereLight(0xffffff, 0xd8dce2, 0.85);
+/* lights — bright studio */
+const hemi = new THREE.HemisphereLight(0xffffff, 0xe8ecf2, 1.35);
 scene.add(hemi);
-const key = new THREE.DirectionalLight(0xfffaf0, 1.15);
+const key = new THREE.DirectionalLight(0xfff8f0, 1.85);
 key.position.set(2.5, 6, 3);
 key.castShadow = true;
 key.shadow.mapSize.set(2048, 2048);
@@ -106,14 +107,23 @@ key.shadow.camera.top = 4; key.shadow.camera.bottom = -4;
 key.shadow.bias = -0.00015;
 key.shadow.radius = 2;
 scene.add(key);
-const fill = new THREE.DirectionalLight(0xdde4f0, 0.45);
+const fill = new THREE.DirectionalLight(0xe8eef8, 0.95);
 fill.position.set(-4, 3, -2);
 scene.add(fill);
-const rim = new THREE.DirectionalLight(0xffe0c0, 0.3);
+const rim = new THREE.DirectionalLight(0xffe8d0, 0.65);
 rim.position.set(0, 2, -4);
 scene.add(rim);
-const soft = new THREE.AmbientLight(0xffffff, 0.25);
+const soft = new THREE.AmbientLight(0xffffff, 0.55);
 scene.add(soft);
+const bounce = new THREE.DirectionalLight(0xffffff, 0.45);
+bounce.position.set(0, -2, 1);
+scene.add(bounce);
+
+/* PMREM studio environment — metals/clearcoat need this */
+const pmrem = new THREE.PMREMGenerator(renderer);
+pmrem.compileEquirectangularShader();
+scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture;
+scene.environmentIntensity = 0.85;
 
 /* ground */
 const groundMat = new THREE.MeshStandardMaterial({ color: 0xe8eaee, metalness: 0.05, roughness: 0.88 });
@@ -127,20 +137,24 @@ scene.add(grid);
 
 /* Materials */
 const M = {
-  aluBrown: new THREE.MeshPhysicalMaterial({ color: 0x8a6a3e, metalness: 0.85, roughness: 0.38, clearcoat: 0.15 }),
-  aluDark: new THREE.MeshPhysicalMaterial({ color: 0x5c4a32, metalness: 0.8, roughness: 0.42 }),
-  fabric: new THREE.MeshStandardMaterial({ color: 0xd4c4a8, metalness: 0, roughness: 0.85, side: THREE.DoubleSide }),
-  fabricDark: new THREE.MeshStandardMaterial({ color: 0xb8a888, metalness: 0, roughness: 0.9 }),
-  rubber: new THREE.MeshStandardMaterial({ color: 0x1a1b1d, metalness: 0.05, roughness: 0.92 }),
-  plasticBlk: new THREE.MeshPhysicalMaterial({ color: 0x1e2024, metalness: 0.15, roughness: 0.55, clearcoat: 0.3 }),
-  steel: new THREE.MeshPhysicalMaterial({ color: 0xb8bec6, metalness: 1, roughness: 0.28 }),
-  motor: new THREE.MeshPhysicalMaterial({ color: 0x2a2e36, metalness: 0.7, roughness: 0.35 }),
-  copper: new THREE.MeshPhysicalMaterial({ color: 0xb87333, metalness: 1, roughness: 0.35 }),
-  pcb: new THREE.MeshStandardMaterial({ color: 0x1a4a2a, metalness: 0.2, roughness: 0.6 }),
-  batt: new THREE.MeshPhysicalMaterial({ color: 0x1f3a2a, metalness: 0.4, roughness: 0.45 }),
-  accent: new THREE.MeshStandardMaterial({ color: 0xff7a1a, emissive: 0xff6a00, emissiveIntensity: 0.45, roughness: 0.4 }),
-  sensor: new THREE.MeshPhysicalMaterial({ color: 0x3a4050, metalness: 0.5, roughness: 0.4 }),
-  lidar: new THREE.MeshPhysicalMaterial({ color: 0xc0c4ca, metalness: 0.9, roughness: 0.25 }),
+  // Champagne / brushed aluminum — bright, needs env map
+  aluBrown: new THREE.MeshPhysicalMaterial({ color: 0xd4c4a8, metalness: 0.72, roughness: 0.32, clearcoat: 0.25, clearcoatRoughness: 0.35, envMapIntensity: 1.1 }),
+  aluDark: new THREE.MeshPhysicalMaterial({ color: 0xb8a888, metalness: 0.65, roughness: 0.38, clearcoat: 0.2, envMapIntensity: 1.0 }),
+  // Light beige / off-white fabric tub
+  fabric: new THREE.MeshStandardMaterial({ color: 0xf2ebe0, metalness: 0, roughness: 0.78, side: THREE.DoubleSide, envMapIntensity: 0.35 }),
+  fabricDark: new THREE.MeshStandardMaterial({ color: 0xe5d9c8, metalness: 0, roughness: 0.82, side: THREE.DoubleSide }),
+  // Dark-gray tires (not black)
+  rubber: new THREE.MeshStandardMaterial({ color: 0x4a4e54, metalness: 0.08, roughness: 0.88, envMapIntensity: 0.25 }),
+  plasticBlk: new THREE.MeshPhysicalMaterial({ color: 0x6a7078, metalness: 0.2, roughness: 0.5, clearcoat: 0.25, envMapIntensity: 0.6 }),
+  steel: new THREE.MeshPhysicalMaterial({ color: 0xd0d5dc, metalness: 0.95, roughness: 0.22, envMapIntensity: 1.2 }),
+  motor: new THREE.MeshPhysicalMaterial({ color: 0x7a828c, metalness: 0.55, roughness: 0.4, envMapIntensity: 0.8 }),
+  copper: new THREE.MeshPhysicalMaterial({ color: 0xd4a574, metalness: 0.9, roughness: 0.3, envMapIntensity: 1.0 }),
+  pcb: new THREE.MeshStandardMaterial({ color: 0x2d6b45, metalness: 0.15, roughness: 0.55 }),
+  batt: new THREE.MeshPhysicalMaterial({ color: 0x3d6b55, metalness: 0.35, roughness: 0.45, envMapIntensity: 0.5 }),
+  accent: new THREE.MeshStandardMaterial({ color: 0xff8a30, emissive: 0xff6a00, emissiveIntensity: 0.35, roughness: 0.4 }),
+  sensor: new THREE.MeshPhysicalMaterial({ color: 0x8a929e, metalness: 0.4, roughness: 0.4, envMapIntensity: 0.7 }),
+  lidar: new THREE.MeshPhysicalMaterial({ color: 0xe0e4ea, metalness: 0.85, roughness: 0.22, envMapIntensity: 1.15 }),
+  rim: new THREE.MeshPhysicalMaterial({ color: 0xc8ced6, metalness: 0.55, roughness: 0.4, envMapIntensity: 0.9 }),
   glow: new THREE.MeshBasicMaterial({ color: 0x3ecf8e }),
   xrayShell: null,
 };
@@ -1043,21 +1057,43 @@ loadActualWagonSTL();
 function loadActualWagonSTL() {
   if (!USE_ACTUAL_STL) return;
   const loader = new GLTFLoader();
-  const matBody = new THREE.MeshPhysicalMaterial({
-    color: 0xb89a6a, metalness: 0.35, roughness: 0.55, clearcoat: 0.1, side: THREE.DoubleSide
+  // Photo-style: light fabric tub + bright champagne frame (not dark brown metal)
+  const matFabric = new THREE.MeshStandardMaterial({
+    color: 0xf3ece3, metalness: 0.02, roughness: 0.76, side: THREE.DoubleSide, envMapIntensity: 0.4
   });
-  const matTire = new THREE.MeshStandardMaterial({ color: 0x1a1b1d, roughness: 0.92, metalness: 0.05 });
+  const matFrame = new THREE.MeshPhysicalMaterial({
+    color: 0xd8c9ae, metalness: 0.68, roughness: 0.34, clearcoat: 0.28, clearcoatRoughness: 0.4,
+    side: THREE.DoubleSide, envMapIntensity: 1.15
+  });
+  const matTire = M.rubber.clone();
+  const matRim = M.rim.clone();
+
+  function prepGeom(o) {
+    if (!o.geometry) return;
+    if (!o.geometry.getAttribute('normal')) o.geometry.computeVertexNormals();
+    else o.geometry.computeVertexNormals(); // refresh after decimation
+    o.geometry.computeBoundingBox();
+  }
 
   loader.load('models/wagon_body.glb', (gltf) => {
     const body = gltf.scene;
     body.name = 'actualBody';
     body.traverse(o => {
-      if (o.isMesh) {
-        o.castShadow = true; o.receiveShadow = true;
-        o.material = matBody.clone();
+      if (!o.isMesh) return;
+      prepGeom(o);
+      o.castShadow = true; o.receiveShadow = true;
+      const n = ((o.name || '') + ' ' + (o.parent && o.parent.name || '')).toLowerCase();
+      const useFabric = n.includes('fabric') || n.includes('tub');
+      // Fallback heuristic if names missing
+      let fabric = useFabric;
+      if (!n.includes('fabric') && !n.includes('frame')) {
+        const bb = o.geometry.boundingBox;
+        const cy = (bb.min.y + bb.max.y) * 0.5;
+        const h = bb.max.y - bb.min.y;
+        fabric = cy > 0.22 || (cy > 0.16 && h > 0.25);
       }
+      o.material = (fabric ? matFabric : matFrame).clone();
     });
-    // Hide schematic procedural body (keep as fallback under)
     if (parts.body) parts.body.visible = false;
     if (parts.fabric) parts.fabric.visible = false;
     wagon.add(body);
@@ -1073,12 +1109,28 @@ function loadActualWagonSTL() {
       if (!wm) return;
       const mesh = gltf.scene;
       mesh.traverse(o => {
-        if (o.isMesh) { o.castShadow = true; o.material = matTire.clone(); }
+        if (!o.isMesh) return;
+        prepGeom(o);
+        o.castShadow = true;
+        // Hub/rim vs tread: near axle (small radius in XZ of local) → lighter rim
+        const pos = o.geometry.getAttribute('position');
+        let rMax = 0;
+        for (let i = 0; i < pos.count; i++) {
+          const x = pos.getX(i), y = pos.getY(i);
+          rMax = Math.max(rMax, Math.hypot(x, y));
+        }
+        // Whole wheel mesh: dark-gray tire; add a light rim disc in spin group
+        o.material = matTire.clone();
       });
-      // Clear procedural tire children but keep spin group for kinematics
       while (wm.wheel.children.length) wm.wheel.remove(wm.wheel.children[0]);
       wm.wheel.add(mesh);
-      // Orange spin mark for visibility
+      // Visible lighter rim rings
+      const rimL = cyl(wheelR * 0.55, 0.006, matRim, 28);
+      rimL.rotation.x = Math.PI / 2; rimL.position.z = wheelW * 0.42; wm.wheel.add(rimL);
+      const rimR = cyl(wheelR * 0.55, 0.006, matRim, 28);
+      rimR.rotation.x = Math.PI / 2; rimR.position.z = -wheelW * 0.42; wm.wheel.add(rimR);
+      const hub = cyl(0.022, wheelW * 0.5, M.steel, 16);
+      hub.rotation.x = Math.PI / 2; wm.wheel.add(hub);
       const mark = box(0.008, 0.03, 0.006, M.accent);
       mark.position.set(0, wheelR * 0.7, wheelW * 0.55);
       wm.wheel.add(mark);
@@ -1848,7 +1900,11 @@ function applyLang() {
 
 function setHQ(on) {
   S.hq = on;
-  renderer.setPixelRatio(on ? Math.min(devicePixelRatio, 2) : Math.min(devicePixelRatio, 1.25));
+  renderer.setPixelRatio(on ? Math.min(devicePixelRatio, 2) : Math.min(devicePixelRatio, 1.35));
+  renderer.toneMappingExposure = on ? 1.38 : 1.32;
+  if (scene.environment) scene.environmentIntensity = on ? 1.0 : 0.85;
+  key.intensity = on ? 2.05 : 1.85;
+  hemi.intensity = on ? 1.45 : 1.35;
   document.getElementById('bHQ').classList.toggle('on', on);
   document.getElementById('bHQ2').textContent = on ? 'HQ ✓' : 'HQ';
 }
