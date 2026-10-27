@@ -119,3 +119,22 @@ html[dir=ltr] table.bom th,html[dir=ltr] table.bom td{text-align:left}
 #mechPanel .stage b{color:var(--accent)}
 html[dir=ltr] #mechPanel{left:auto;right:12px}
 .tb.on{background:#fff3e8}
+
+.tb-labels{
+  font-size:13px!important;font-weight:700!important;padding:8px 14px!important;
+  border-width:2px!important;min-height:36px;white-space:nowrap;
+  background:#fff!important;color:#1a1d24!important;
+}
+.tb-labels.on{
+  background:#fff3e8!important;border-color:var(--accent)!important;color:var(--accent)!important;
+}
+.tb-labels.off-state{
+  border-color:#889!important;
+}
+/* keep labels btn visible on narrow screens — never collapse */
+@media(max-width:720px){
+  .tb-labels{display:inline-flex!important;align-items:center;order:-1;font-size:12px!important;padding:8px 10px!important}
+  .tbtns{max-width:70vw;justify-content:flex-end}
+}
+#labels.hidden-labels{display:none!important;visibility:hidden!important}
+#labels.hidden-labels .lbl{display:none!important}

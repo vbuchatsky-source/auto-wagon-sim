@@ -10,7 +10,7 @@ const I = {
     cfgA:'תצורה A — מנוע אחד', cfgB:'תצורה B — 4 מנועים',
     cfgAdesc:'מנוע אחורי + תיבת הילוכים + דיפרנציאל/שרשרת, הגה Ackermann בקדמי',
     cfgBdesc:'מנוע לכל גלגל (hub/geared), היגוי skid-steer',
-    xray:'X-RAY', cut:'חתך', labels:'תוויות', tour:'סיור מודרך',
+    xray:'X-RAY', cut:'חתך', labels:'תוויות', labelsShow:'🏷 הצג תוויות', labelsHide:'🏷 הסתר תוויות', tour:'סיור מודרך',
     spd:'מהירות', batt:'סוללה', range:'טווח', cur:'זרם', trq:'מומנט', rpm:'סל״ד',
     payload:'מטען (ק״ג)', slope:'שיפוע (°)', maxSpd:'מהירות מקס׳', simSpd:'מהירות סימ׳',
     modeIdle:'IDLE', modeFollow:'FOLLOW-ME', modeWay:'WAYPOINTS', modeAvoid:'AVOID',
@@ -32,7 +32,7 @@ const I = {
     cfgA:'Config A — single motor', cfgB:'Config B — 4 motors',
     cfgAdesc:'Rear geared motor + diff/chain, front Ackermann steering',
     cfgBdesc:'One motor per wheel (hub/geared), skid-steer',
-    xray:'X-RAY', cut:'Section', labels:'Labels', tour:'Guided tour',
+    xray:'X-RAY', cut:'Section', labels:'Labels', labelsShow:'🏷 Show labels', labelsHide:'🏷 Hide labels', tour:'Guided tour',
     spd:'Speed', batt:'Battery', range:'Range', cur:'Current', trq:'Torque', rpm:'RPM',
     payload:'Payload (kg)', slope:'Slope (°)', maxSpd:'Max speed', simSpd:'Sim speed',
     modeIdle:'IDLE', modeFollow:'FOLLOW-ME', modeWay:'WAYPOINTS', modeAvoid:'AVOID',
@@ -964,6 +964,14 @@ const labelsEl = document.getElementById('labels');
 const labelEls = {};
 function syncLabels() {
   labelsEl.innerHTML = '';
+  Object.keys(labelEls).forEach(k => delete labelEls[k]);
+  if (!S.labels) {
+    labelsEl.classList.add('hidden-labels');
+    labelsEl.style.display = 'none';
+    return;
+  }
+  labelsEl.classList.remove('hidden-labels');
+  labelsEl.style.display = 'block';
   labelDefs.forEach(d => {
     // skip cfg-specific when hidden
     const onlyA = ['hub','drvB','couple','brgB'];
@@ -1623,8 +1631,7 @@ function applyLang() {
   document.getElementById('bLang2').textContent = lang === 'he' ? 'English' : 'עברית';
   document.getElementById('bXray').textContent = T('xray');
   document.getElementById('bCut').textContent = T('cut');
-  document.getElementById('bLabels').textContent = '🏷 ' + T('labels');
-  document.getElementById('bLabels').classList.toggle('on', S.labels);
+  updateLabelsButtons();
   document.getElementById('dkSpd').textContent = T('spd');
   document.getElementById('dkBatt').textContent = T('batt');
   document.getElementById('dkRange').textContent = T('range');
@@ -1666,24 +1673,45 @@ document.getElementById('bCut').onclick = () => {
   document.getElementById('bCut').classList.toggle('on', S.cut);
   applyCut();
 };
+function updateLabelsButtons() {
+  const txt = S.labels ? T('labelsHide') : T('labelsShow');
+  for (const id of ['bLabels', 'bLabels2']) {
+    const b = document.getElementById(id);
+    if (!b) continue;
+    b.textContent = txt;
+    b.classList.toggle('on', S.labels);
+    b.classList.toggle('off-state', !S.labels);
+    b.setAttribute('aria-pressed', S.labels ? 'true' : 'false');
+  }
+}
 function setLabels(on) {
   S.labels = !!on;
-  const b = document.getElementById('bLabels');
-  b.classList.toggle('on', S.labels);
-  b.textContent = '🏷 ' + T('labels');
-  syncLabels();
+  // Nuke ALL label DOM + CSS hide (mech/tour/overlays)
+  labelsEl.innerHTML = '';
+  labelsEl.classList.toggle('hidden-labels', !S.labels);
+  labelsEl.style.display = S.labels ? 'block' : 'none';
+  labelsEl.style.visibility = S.labels ? 'visible' : 'hidden';
+  document.querySelectorAll('.lbl').forEach(el => el.remove());
+  updateLabelsButtons();
+  if (S.labels) syncLabels();
+  else {
+    // keep empty
+    Object.keys(labelEls).forEach(k => delete labelEls[k]);
+  }
   updateLabelPositions();
 }
-document.getElementById('bLabels').onclick = () => {
+function toggleLabels() {
   setLabels(!S.labels);
-  toast(S.labels ? ('🏷 ' + T('labels') + ' ON') : ('🏷 ' + T('labels') + ' OFF'));
-};
+  toast(S.labels ? T('labelsHide') : T('labelsShow'));
+}
+document.getElementById('bLabels').onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleLabels(); };
+const bL2 = document.getElementById('bLabels2');
+if (bL2) bL2.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleLabels(); };
 addEventListener('keydown', (e) => {
   if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
   if (e.key === 'l' || e.key === 'L' || e.code === 'KeyL') {
     e.preventDefault();
-    setLabels(!S.labels);
-    toast(S.labels ? ('🏷 ' + T('labels') + ' ON') : ('🏷 ' + T('labels') + ' OFF'));
+    toggleLabels();
   }
 });
 document.getElementById('bTour').onclick = startTour;
@@ -1731,5 +1759,5 @@ updateDash();
 requestAnimationFrame(frame);
 
 // Expose for headless tests / screenshots
-window.__AW = { S, wagonPose, applyCfg, applyXray, applyCut, startTour, calcEngineering, addObstacle, scene, camera, renderer, controls, parts, wheelMeshes, driveAnim, openMechView, closeMechView, setLabels, syncLabels, setMode: (m) => { S.mode = m; S.running = m !== 'idle'; } };
+window.__AW = { S, wagonPose, applyCfg, applyXray, applyCut, startTour, calcEngineering, addObstacle, scene, camera, renderer, controls, parts, wheelMeshes, driveAnim, openMechView, closeMechView, setLabels, toggleLabels, syncLabels, setMode: (m) => { S.mode = m; S.running = m !== 'idle'; } };
 console.info('AutoWagon ready');
