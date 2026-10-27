@@ -6,7 +6,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#f4f5f7">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Crect x=%223%22 y=%226%22 width=%2210%22 height=%226%22 rx=%221%22 fill=%22%23c4a574%22/%3E%3Ccircle cx=%225%22 cy=%2213%22 r=%222%22 fill=%22%23222%22/%3E%3Ccircle cx=%2211%22 cy=%2213%22 r=%222%22 fill=%22%23222%22/%3E%3C/svg%3E">
-<link rel="stylesheet" href="style.css?v=b1519f9e7f">
+<link rel="stylesheet" href="style.css?v=3095849">
 <script async src="./vendor/es-module-shims.js"></script>
 <script type="importmap">{"imports":{"three":"./vendor/three/three.module.js","three/addons/":"./vendor/three/jsm/"}}</script>
 </head>
@@ -37,6 +37,7 @@
     <button class="ptab" data-t="calc">מחשבון</button>
     <button class="ptab" data-t="wire">חיווט</button>
     <button class="ptab" data-t="bom">BOM</button>
+    <button class="ptab" data-t="code">קוד</button>
   </div>
   <div id="pbody"></div>
 </aside>
@@ -51,6 +52,11 @@
     <div class="dcell"><span class="dk" id="dkRpm">סל״ד</span><span class="dv" id="dvRpm">0</span><span class="du">rpm</span></div>
   </div>
   <div id="modeTag">IDLE</div>
+</div>
+<div id="ioPanel" class="io-panel" aria-live="polite">
+  <div class="io-title">PLC / Pico · מצב חי</div>
+  <div id="ioState" class="io-state">INIT</div>
+  <div id="ioGrid" class="io-grid"></div>
 </div>
 
 <div id="toast"></div>
@@ -67,10 +73,10 @@
       <button id="bLang2" class="ghost">English</button>
       <button id="bHQ2" class="ghost">HQ</button>
     </div>
-    <p class="fine" id="sDims">מידות אמבט: 88 × 51 × 35 ס״מ · גלגלים Ø17 × 10 ס״מ</p>
+    <p class="fine" id="sDims">מידות מה־STL: ~100×55×58 ס״מ · גלגלים Ø14 × 4 ס״מ · בסיס 86.5 · מסילה 49.5</p>
   </div>
 </div>
 
-<script type="module" src="app.js?v=9b203cd62d"></script>
+<script type="module" src="app.js?v=3095849"></script>
 </body>
 </html>

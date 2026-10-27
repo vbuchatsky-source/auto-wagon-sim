@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 /* ========== i18n ========== */
 const I = {
   he: {
     start:'התחל', tag:'סימולטור עגלת קמפינג אוטונומית — שתי תצורות הנעה, חיישנים, מעקב וניווט',
-    dims:'מידות אמבט: 88 × 51 × 35 ס״מ · גלגלים Ø17 × 10 ס״מ',
+    dims:'מידות STL: אורך 100.5 × רוחב 55 × גובה 58 ס״מ · גלגלים Ø14×4 · בסיס 86.5 · מסילה 49.5',
     drive:'הנעה', sim:'סימולציה', calc:'מחשבון', wire:'חיווט', bom:'BOM',
     cfgA:'תצורה A — מנוע אחד', cfgB:'תצורה B — 4 מנועים',
     cfgAdesc:'מנוע אחורי + תיבת הילוכים + דיפרנציאל/שרשרת, הגה Ackermann בקדמי',
@@ -24,10 +25,11 @@ const I = {
     loadBom:'טוען BOM…',
     mech:'מנגנון הנעה', mechClose:'סגור מנגנון',
     foldWarn:'שים לב: לוחית תחתית מקבעת את הקיפול — או תושבות על רגלי הקסטר בלבד (שומר קיפול, פחות קשיחות).',
+    code:'קוד Pico', plcIo:'מצב בקר',
   },
   en: {
     start:'Start', tag:'Autonomous camping-wagon simulator — dual drivetrains, sensors, follow & navigate',
-    dims:'Tub: 88 × 51 × 35 cm · Wheels Ø17 × 10 cm',
+    dims:'STL: L100.5 × W55 × H58 cm · Wheels Ø14×4 · WB 86.5 · track 49.5',
     drive:'Drivetrain', sim:'Simulation', calc:'Calculator', wire:'Wiring', bom:'BOM',
     cfgA:'Config A — single motor', cfgB:'Config B — 4 motors',
     cfgAdesc:'Rear geared motor + diff/chain, front Ackermann steering',
@@ -46,6 +48,7 @@ const I = {
     loadBom:'Loading BOM…',
     mech:'Drivetrain mechanism', mechClose:'Close mechanism',
     foldWarn:'Note: undercarriage plate locks folding — or mount only on caster legs (keeps folding, less stiffness).',
+    code:'Pico code', plcIo:'Controller state',
   }
 };
 let lang = 'he';
@@ -147,15 +150,28 @@ M.xrayShell.opacity = 0.22;
 M.xrayShell.depthWrite = false;
 
 /* ========== Dimensions (meters) ========== */
-const Lx = 0.88, Wy = 0.51, Hz = 0.35; // tub L W H
-const wheelR = 0.085, wheelW = 0.10;
-const groundClear = 0.10; // approx under tub
-const axleY = wheelR;
-const tubBottomY = axleY + 0.02; // approx
-const tubTopY = tubBottomY + Hz;
-const WHEEL_TRACK = Wy + 0.04;
-const WHEELBASE = Lx - 0.16;
-const SHAFT_D = 0.012; // Ø12 keyed axle
+/* Dimensions from actual wagon STL (mm→m) */
+const Lx = 0.934;           // body length along X (sim forward)
+const Wy = 0.525;           // frame width (excl. outer tire faces)
+const Hz = 0.393;           // tub approx height (floor~0.189 → top~0.582)
+const wheelR = 0.070;       // Ø140 mm
+const wheelW = 0.040;       // 40 mm
+const groundClear = 0.031;  // body/fork min Y
+const axleY = 0.070;
+const tubBottomY = 0.189;   // measured tub floor
+const tubTopY = 0.582;      // overall height
+const WHEEL_TRACK = 0.495;  // center-to-center
+const WHEELBASE = 0.865;
+const SHAFT_D = 0.012;
+const WHEEL_POS = {
+  FL: { x:  0.4325, z:  0.2475 },
+  FR: { x:  0.4325, z: -0.2475 },
+  RL: { x: -0.4325, z:  0.2475 },
+  RR: { x: -0.4325, z: -0.2475 },
+};
+const USE_ACTUAL_STL = true;
+const TUBE_OD = 0.022;      // printable / frame tube OD estimate
+const FRAME_PLATE_T = 0.004;
 
 const root = new THREE.Group();
 scene.add(root);
@@ -372,19 +388,22 @@ function makeFork() {
 function buildWheels() {
   const wg = new THREE.Group();
   const positions = [
-    { id: 'FL', x:  Lx / 2 - 0.08, z:  Wy / 2 + 0.02, caster: true, side: 1 },
-    { id: 'FR', x:  Lx / 2 - 0.08, z: -Wy / 2 - 0.02, caster: true, side: -1 },
-    { id: 'RL', x: -Lx / 2 + 0.08, z:  Wy / 2 + 0.02, caster: false, side: 1 },
-    { id: 'RR', x: -Lx / 2 + 0.08, z: -Wy / 2 - 0.02, caster: false, side: -1 },
+    { id: 'FL', x: WHEEL_POS.FL.x, z: WHEEL_POS.FL.z, caster: true, side: 1 },
+    { id: 'FR', x: WHEEL_POS.FR.x, z: WHEEL_POS.FR.z, caster: true, side: -1 },
+    { id: 'RL', x: WHEEL_POS.RL.x, z: WHEEL_POS.RL.z, caster: false, side: 1 },
+    { id: 'RR', x: WHEEL_POS.RR.x, z: WHEEL_POS.RR.z, caster: false, side: -1 },
   ];
   positions.forEach(p => {
     const holder = new THREE.Group();
     holder.position.set(p.x, axleY, p.z);
     const yawPivot = new THREE.Group();
     holder.add(yawPivot);
-    const fork = makeFork();
-    yawPivot.add(fork);
+    if (!USE_ACTUAL_STL) {
+      const fork = makeFork();
+      yawPivot.add(fork);
+    }
     const spin = makeWheel();
+    spin.name = 'spin_' + p.id;
     yawPivot.add(spin);
     if (p.caster) {
       const swivel = cyl(0.018, 0.022, M.plasticBlk, 12);
@@ -457,7 +476,7 @@ function makePillowBlock(x, y, z, parent) {
 function buildCfgA() {
   const g = new THREE.Group();
   g.name = 'cfgA';
-  const axleX = -Lx / 2 + 0.08;
+  const axleX = WHEEL_POS.RL.x;
   const axleY0 = axleY;
 
   // Rear axle Ø12 through pillow blocks
@@ -566,10 +585,10 @@ function buildCfgA() {
 
   // ---- Front Ackermann ----
   const servo = box(0.055, 0.038, 0.028, M.accent);
-  servo.position.set(Lx / 2 - 0.20, tubBottomY - 0.048, 0);
+  servo.position.set(WHEEL_POS.FL.x - 0.12, tubBottomY - 0.048, 0);
   g.add(servo);
   const horn = box(0.045, 0.008, 0.014, M.steel);
-  horn.position.set(Lx / 2 - 0.165, tubBottomY - 0.042, 0);
+  horn.position.set(WHEEL_POS.FL.x - 0.085, tubBottomY - 0.042, 0);
   g.add(horn);
   driveAnim.servoHorn = horn;
   addLabel('servo', 'סרבו 20kg·cm', 'Servo 20kg·cm', servo);
@@ -577,7 +596,7 @@ function buildCfgA() {
   // Tie rod
   const tie = cyl(0.005, Wy * 0.72, M.steel, 10);
   tie.rotation.x = Math.PI / 2;
-  tie.position.set(Lx / 2 - 0.14, axleY0 + 0.035, 0);
+  tie.position.set(WHEEL_POS.FL.x - 0.06, axleY0 + 0.035, 0);
   g.add(tie);
   driveAnim.tieRod = tie;
   addLabel('tierod', 'מוט הגה (tie rod)', 'Tie rod', tie);
@@ -585,10 +604,10 @@ function buildCfgA() {
   // Ackermann arms / kingpin stubs at front wheel holders (visual)
   for (const zs of [Wy / 2 + 0.02, -Wy / 2 - 0.02]) {
     const arm = box(0.05, 0.01, 0.012, M.steel);
-    arm.position.set(Lx / 2 - 0.12, axleY0 + 0.035, zs * 0.55);
+    arm.position.set(WHEEL_POS.FL.x - 0.04, axleY0 + 0.035, zs * 0.55);
     g.add(arm);
     const king = cyl(0.008, 0.04, M.steel, 10);
-    king.position.set(Lx / 2 - 0.08, axleY0 + 0.03, zs);
+    king.position.set(WHEEL_POS.FL.x, axleY0 + 0.03, zs);
     g.add(king);
   }
   addLabel('kingpin', 'קינגפין + זרוע Ackermann', 'Kingpin + Ackermann arm', g.children[g.children.length - 1]);
@@ -748,75 +767,62 @@ function buildElectronics() {
   parts.elec = g;
 }
 
-/* Sensors */
+/* Sensors — 2 front, 1 left, 1 right, NONE rear + HX711 load cell/plate */
 function buildSensors() {
   const g = new THREE.Group();
   g.name = 'sensors';
 
-  // Ultrasonic / ToF bumpers front + sides
-  const usPos = [
-    [Lx/2 + 0.01, tubBottomY + 0.08, 0],
-    [Lx/2 - 0.05, tubBottomY + 0.08, Wy/2],
-    [Lx/2 - 0.05, tubBottomY + 0.08, -Wy/2],
-    [-Lx/2 - 0.01, tubBottomY + 0.08, 0],
-  ];
-  usPos.forEach((p, i) => {
-    const us = box(0.022, 0.018, 0.04, M.sensor);
-    us.position.set(...p);
-    g.add(us);
-    // eyes
-    for (const dz of [-0.01, 0.01]) {
-      const eye = cyl(0.006, 0.008, M.glow, 8);
-      eye.rotation.z = Math.PI/2;
-      eye.position.set(p[0] + 0.012, p[1], p[2] + dz);
-      g.add(eye);
+  const frontY = tubBottomY + 0.06;
+  [[Lx * 0.48, frontY,  0.08, 'front_l', 'us_fl', 'קרבה קדמי L', 'Front prox L'],
+   [Lx * 0.48, frontY, -0.08, 'front_r', 'us_fr', 'קרבה קדמי R', 'Front prox R']].forEach((p, i) => {
+    const us = box(0.022, 0.018, 0.035, M.sensor);
+    us.position.set(p[0], p[1], p[2]); us.userData.io = p[3]; g.add(us);
+    for (const dz of [-0.008, 0.008]) {
+      const eye = cyl(0.005, 0.008, M.glow, 8);
+      eye.rotation.z = Math.PI / 2; eye.position.set(p[0] + 0.012, p[1], p[2] + dz); g.add(eye);
     }
-    if (i === 0) addLabel('us', 'אולטרסוניק / ToF', 'Ultrasonic / ToF', us);
+    addLabel(p[4], p[5], p[6], us);
   });
 
-  // 2D LiDAR on front top
+  const sideY = tubBottomY + 0.05;
+  [[0.05, sideY,  Wy * 0.48, 'left', 'us_l', 'מכשול שמאל (SW1)', 'Left obstacle (SW1)'],
+   [0.05, sideY, -Wy * 0.48, 'right', 'us_r', 'מכשול ימין (SW2)', 'Right obstacle (SW2)']].forEach(p => {
+    const us = box(0.035, 0.018, 0.022, M.sensor);
+    us.position.set(p[0], p[1], p[2]); us.userData.io = p[3]; g.add(us);
+    addLabel(p[4], p[5], p[6], us);
+  });
+
+  const plate = box(0.28, 0.006, 0.22, M.aluDark);
+  plate.position.set(0, tubBottomY + 0.02, 0); g.add(plate);
+  addLabel('plate_load', 'לוח לחץ', 'Pressure plate', plate);
+  const cell = box(0.04, 0.012, 0.04, M.accent);
+  cell.position.set(0, tubBottomY + 0.01, 0); cell.userData.io = 'load_cell'; g.add(cell);
+  addLabel('hx711', 'תא עומס HX711', 'HX711 load cell', cell);
+
   const lidarBase = cyl(0.035, 0.025, M.lidar, 24);
-  lidarBase.position.set(Lx/2 - 0.12, tubTopY + 0.04, 0);
-  g.add(lidarBase);
+  lidarBase.position.set(Lx * 0.35, tubTopY - 0.02, 0); g.add(lidarBase);
   const lidarSpin = cyl(0.028, 0.02, M.plasticBlk, 16);
-  lidarSpin.position.set(Lx/2 - 0.12, tubTopY + 0.06, 0);
-  g.add(lidarSpin);
+  lidarSpin.position.set(Lx * 0.35, tubTopY + 0.01, 0); g.add(lidarSpin);
   parts.lidarSpin = lidarSpin;
   addLabel('lidar', 'LiDAR 2D', '2D LiDAR', lidarBase);
 
-  // IMU (small cube near ESP)
   const imu = box(0.02, 0.008, 0.015, M.accent);
-  imu.position.set(-0.12, tubBottomY - 0.042, -0.14);
-  g.add(imu);
+  imu.position.set(-0.12, tubBottomY - 0.042, -0.14); g.add(imu);
   addLabel('imu', 'IMU', 'IMU', imu);
 
-  // GPS puck
   const gps = cyl(0.025, 0.012, M.plasticBlk, 16);
-  gps.position.set(-0.2, tubTopY + 0.02, -Wy/2 + 0.08);
-  g.add(gps);
+  gps.position.set(-0.2, tubTopY - 0.05, -Wy * 0.35); g.add(gps);
   addLabel('gps', 'GPS', 'GPS', gps);
 
-  // Camera front
   const cam = box(0.03, 0.025, 0.03, M.plasticBlk);
-  cam.position.set(Lx/2 - 0.02, tubTopY + 0.02, 0.12);
-  g.add(cam);
-  const lens = cyl(0.01, 0.01, M.steel, 12);
-  lens.rotation.z = Math.PI/2;
-  lens.position.set(Lx/2 + 0.005, tubTopY + 0.02, 0.12);
-  g.add(lens);
-  addLabel('cam', 'מצלמה', 'Camera', cam);
+  cam.position.set(Lx * 0.45, tubTopY - 0.08, 0.10); g.add(cam);
+  addLabel('cam', 'מצלמת מעקב', 'Follow camera', cam);
 
-  // UWB/BLE antenna
-  const ant = cyl(0.004, 0.08, M.steel, 6);
-  ant.position.set(-Lx/2 + 0.05, tubTopY + 0.05, Wy/2 - 0.05);
-  g.add(ant);
-  addLabel('uwb', 'אנטנת UWB/BLE', 'UWB/BLE antenna', ant);
-
-  // Wheel encoders (on rear)
-  for (const zs of [Wy/2 + 0.02, -Wy/2 - 0.02]) {
-    const enc = cyl(0.02, 0.015, M.sensor, 12);
-    enc.rotation.z = Math.PI/2;
-    enc.position.set(-Lx/2 + 0.08, axleY, zs - Math.sign(zs) * 0.06);
+  for (const id of ['RL', 'RR']) {
+    const wp = WHEEL_POS[id];
+    const enc = cyl(0.018, 0.012, M.sensor, 12);
+    enc.rotation.z = Math.PI / 2;
+    enc.position.set(wp.x, axleY, wp.z - Math.sign(wp.z) * 0.04);
     g.add(enc);
   }
   addLabel('enc', 'אנקודי גלגל', 'Wheel encoders', g.children[g.children.length - 1]);
@@ -888,6 +894,139 @@ function setDefaultWaypoints() {
   wpGroup.visible = false;
 }
 
+
+/* ========== PLC / Pico controller (mirrors wagon_code/main.py) ========== */
+const PLC = {
+  state: 'INIT',
+  prev: null,
+  tState: 0,
+  ticks: 0,
+  T_LOOP: 0.015,
+  T_INIT: 0.100,
+  T_HOLD: 0.500,
+  T_LOST: 0.800,
+  accum: 0,
+  io: { front_l: false, front_r: false, left: false, right: false, load_g: 2000, estop: false },
+  // Manual overrides from IO panel / follow-me
+  force: {},
+};
+
+function plcReadSensors(dt) {
+  // Derive from sim: follow target distance → front prox; obstacles → sides; payload slider → load
+  const io = { ...PLC.io, ...PLC.force };
+  if (followTarget && followTarget.visible) {
+    const dx = followTarget.position.x - wagonPose.x;
+    const dz = followTarget.position.z - wagonPose.z;
+    const dist = Math.hypot(dx, dz);
+    const ang = Math.atan2(dz, dx) - wagonPose.yaw;
+    const ahead = Math.cos(ang) > 0.3 && dist < 2.5 && dist > 0.45;
+    io.front_l = ahead && Math.sin(ang) >= -0.15;
+    io.front_r = ahead && Math.sin(ang) <=  0.15;
+    if (ahead) { io.front_l = true; io.front_r = true; }
+  } else if (S.mode === 'follow' || S.running) {
+    // When running without explicit target geometry, pulse front from mode
+    io.front_l = io.front_r = (S.mode === 'follow' || S.mode === 'way');
+  }
+  // Obstacles near wagon sides
+  io.left = false; io.right = false;
+  obstacles.forEach(o => {
+    const dx = o.position.x - wagonPose.x;
+    const dz = o.position.z - wagonPose.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist < 1.2) {
+      const ang = Math.atan2(dz, dx) - wagonPose.yaw;
+      if (Math.abs(ang) > 0.6 && Math.abs(ang) < 2.2) {
+        if (ang > 0) io.left = true; else io.right = true;
+      }
+      if (Math.abs(ang) < 0.5 && dist < 0.9) { io.front_l = true; io.front_r = true; }
+    }
+  });
+  io.load_g = (S.payload || 25) * 1000;
+  io.front_any = io.front_l || io.front_r;
+  io.obstacle = io.left || io.right;
+  io.overload = io.load_g > 40000;
+  io.has_load = io.load_g >= 500;
+  PLC.io = io;
+  return io;
+}
+
+function plcGoto(st) {
+  PLC.prev = PLC.state;
+  PLC.state = st;
+  PLC.tState = 0;
+}
+
+function plcStep(dt) {
+  PLC.accum += dt;
+  if (PLC.accum < PLC.T_LOOP) return;
+  PLC.accum = 0;
+  PLC.ticks++;
+  PLC.tState += PLC.T_LOOP;
+  const io = plcReadSensors(dt);
+  const st = PLC.state;
+
+  if (io.estop) { plcGoto('OBSTACLE_STOP'); updateIoPanel(); return; }
+  if (io.overload) { plcGoto('OVERLOAD_STOP'); updateIoPanel(); return; }
+
+  if (st === 'INIT') {
+    if (PLC.tState >= PLC.T_INIT) plcGoto('IDLE');
+  } else if (st === 'IDLE') {
+    if (io.front_any && io.has_load && !io.obstacle) plcGoto('FOLLOW_FWD');
+  } else if (st === 'FOLLOW_FWD') {
+    if (io.obstacle) plcGoto('OBSTACLE_STOP');
+    else if (!io.front_any && PLC.tState >= PLC.T_LOST) plcGoto('IDLE');
+  } else if (st === 'FOLLOW_REV') {
+    if (io.obstacle) plcGoto('OBSTACLE_STOP');
+    else if (PLC.tState >= 0.4) plcGoto('IDLE');
+  } else if (st === 'OBSTACLE_STOP' || st === 'OVERLOAD_STOP') {
+    if (!io.obstacle && !io.overload && PLC.tState >= PLC.T_HOLD) plcGoto('IDLE');
+  }
+  updateIoPanel();
+  // Drive hint into sim: when PLC follows, ensure running
+  if (PLC.state === 'FOLLOW_FWD' && S.mode === 'idle') {
+    /* visual only — user modes still own wagonPose; mech anim uses omega */
+  }
+}
+
+function updateIoPanel() {
+  const stEl = document.getElementById('ioState');
+  const grid = document.getElementById('ioGrid');
+  if (!stEl || !grid) return;
+  stEl.textContent = PLC.state;
+  const io = PLC.io;
+  const row = (k, v, isOn) =>
+    `<div class="io-row"><span class="io-k">${k}</span><span class="io-v ${isOn?'on':'off'}">${v}</span></div>`;
+  grid.innerHTML = [
+    row('FL', io.front_l ? '1' : '0', io.front_l),
+    row('FR', io.front_r ? '1' : '0', io.front_r),
+    row('L', io.left ? '1' : '0', io.left),
+    row('R', io.right ? '1' : '0', io.right),
+    row('rear', '—', false),
+    row('load', Math.round(io.load_g||0)+'g', io.has_load),
+    row('M1', PLC.state==='FOLLOW_FWD'?'FWD':(PLC.state==='FOLLOW_REV'?'REV':'STOP'), PLC.state.startsWith('FOLLOW')),
+  ].join('');
+}
+
+const PICO_CODE_SNIPPET = `#{Hebrew README: /workspace/wagon_code/README.md}
+# states: INIT IDLE FOLLOW_FWD FOLLOW_REV OBSTACLE_STOP OVERLOAD_STOP
+# Cam1→FRONT_L/R  Switch1→LEFT  Switch2→RIGHT  (no rear)
+# delay(15) → T_LOOP_MS=15
+
+ST = IDLE
+loop:
+  io = read_sensors()   # FL,FR,L,R,HX711
+  if io.overload: goto OVERLOAD_STOP
+  if ST == IDLE and io.front_any and io.has_load and not io.obstacle:
+      goto FOLLOW_FWD; motor.forward(255)
+  if ST == FOLLOW_FWD:
+      if io.obstacle: goto OBSTACLE_STOP; motor.stop()
+      elif not io.front_any: creep / lost → IDLE
+      else: motor.forward(255)
+  if ST == OBSTACLE_STOP and not io.obstacle for 500ms:
+      goto IDLE
+  sleep_ms(15)
+`;
+
 /* Build all */
 buildWagonBody();
 buildWheels();
@@ -898,6 +1037,54 @@ buildElectronics();
 buildSensors();
 buildFollowTarget();
 setDefaultWaypoints();
+loadActualWagonSTL();
+
+/** Load decimated actual-wagon GLB; hide schematic body meshes; swap wheel spins */
+function loadActualWagonSTL() {
+  if (!USE_ACTUAL_STL) return;
+  const loader = new GLTFLoader();
+  const matBody = new THREE.MeshPhysicalMaterial({
+    color: 0xb89a6a, metalness: 0.35, roughness: 0.55, clearcoat: 0.1, side: THREE.DoubleSide
+  });
+  const matTire = new THREE.MeshStandardMaterial({ color: 0x1a1b1d, roughness: 0.92, metalness: 0.05 });
+
+  loader.load('models/wagon_body.glb', (gltf) => {
+    const body = gltf.scene;
+    body.name = 'actualBody';
+    body.traverse(o => {
+      if (o.isMesh) {
+        o.castShadow = true; o.receiveShadow = true;
+        o.material = matBody.clone();
+      }
+    });
+    // Hide schematic procedural body (keep as fallback under)
+    if (parts.body) parts.body.visible = false;
+    if (parts.fabric) parts.fabric.visible = false;
+    wagon.add(body);
+    parts.actualBody = body;
+    parts.body = body;
+    toast(L('נטען STL אמיתי', 'Actual wagon STL loaded'));
+  }, undefined, (err) => console.warn('body GLB', err));
+
+  const ids = ['FL','FR','RL','RR'];
+  ids.forEach(id => {
+    loader.load('models/wheel_' + id + '.glb', (gltf) => {
+      const wm = wheelMeshes.find(w => w.id === id);
+      if (!wm) return;
+      const mesh = gltf.scene;
+      mesh.traverse(o => {
+        if (o.isMesh) { o.castShadow = true; o.material = matTire.clone(); }
+      });
+      // Clear procedural tire children but keep spin group for kinematics
+      while (wm.wheel.children.length) wm.wheel.remove(wm.wheel.children[0]);
+      wm.wheel.add(mesh);
+      // Orange spin mark for visibility
+      const mark = box(0.008, 0.03, 0.006, M.accent);
+      mark.position.set(0, wheelR * 0.7, wheelW * 0.55);
+      wm.wheel.add(mark);
+    }, undefined, (err) => console.warn('wheel', id, err));
+  });
+}
 
 function applyCfg() {
   if (parts.cfgA) parts.cfgA.visible = S.cfg === 'A';
@@ -1462,6 +1649,22 @@ function renderPanel() {
       <button class="btn primary block" id="bXls">${T('exportXls')}</button>
     `;
     document.getElementById('bXls').onclick = exportExcel;
+  } else if (S.tab === 'code') {
+    pb.innerHTML = `
+      <h3>${L('קוד Pico (MicroPython)','Pico MicroPython code')}</h3>
+      <p class="note">${L('מכונת מצבים תואמת לתרשים הזרימה + Arduino מה־docx. חיישנים: 2 קדמיים, שמאל, ימין, ללא אחורי, HX711.','State machine matching the flowchart + Arduino from the docx. Sensors: 2 front, left, right, no rear, HX711.')}</p>
+      <pre class="codeview" dir="ltr">${PICO_CODE_SNIPPET.replace(/</g,'&lt;')}</pre>
+      <p class="note">GPIO: FL=GP2 FR=GP3 L=GP4 R=GP5 HX711=GP6/7 · cfg A: GP10/11/12 · zip: AutoWagon_Code.zip</p>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+        <button class="btn" id="bPlcFwd">${L('הדמה Cam1','Sim Cam1')}</button>
+        <button class="btn" id="bPlcObs">${L('הדמה מכשול','Sim obstacle')}</button>
+        <button class="btn" id="bPlcRev">${L('אחורה (Cam2)','Reverse (Cam2)')}</button>
+        <button class="btn" id="bPlcClr">${L('נקה','Clear')}</button>
+      </div>`;
+    document.getElementById('bPlcFwd').onclick = () => { PLC.force = { front_l: true, front_r: true }; };
+    document.getElementById('bPlcObs').onclick = () => { PLC.force = { ...(PLC.force||{}), left: true }; };
+    document.getElementById('bPlcRev').onclick = () => { plcGoto('FOLLOW_REV'); };
+    document.getElementById('bPlcClr').onclick = () => { PLC.force = {}; plcGoto('IDLE'); };
   }
 }
 
@@ -1472,7 +1675,7 @@ function drawWiring(svg) {
     [20,140,100,40,'ESP32'],[140,140,100,40,'RPi / Jetson'],
     [20,210,120,40,'BTS7960 Driver'],[160,210,120,40,'Motor 250W'],
     [20,280,120,40,'Steering Servo'],[160,280,120,40,'Diff / Axle'],
-    [20,350,70,36,'LiDAR'],[100,350,70,36,'IMU'],[180,350,60,36,'US×4'],[250,350,50,36,'UWB'],
+    [20,350,70,36,'LiDAR'],[100,350,70,36,'IMU'],[180,350,70,36,'Prox 2F+2S'],[250,350,50,36,'UWB'],
   ] : [
     [20,20,90,36,'Battery 24V'],[130,20,80,36,'BMS'],[230,20,70,36,'Fuse'],
     [20,80,90,36,'Main SW'],[130,80,80,36,'E-Stop'],[230,80,70,36,'DC-DC'],
@@ -1742,6 +1945,7 @@ function frame(now) {
   acc += raw * S.simMul;
   while (acc >= SIM_DT) {
     simStep(SIM_DT);
+    plcStep(SIM_DT);
     acc -= SIM_DT;
   }
   controls.update();
@@ -1759,5 +1963,5 @@ updateDash();
 requestAnimationFrame(frame);
 
 // Expose for headless tests / screenshots
-window.__AW = { S, wagonPose, applyCfg, applyXray, applyCut, startTour, calcEngineering, addObstacle, scene, camera, renderer, controls, parts, wheelMeshes, driveAnim, openMechView, closeMechView, setLabels, toggleLabels, syncLabels, setMode: (m) => { S.mode = m; S.running = m !== 'idle'; } };
+window.__AW = { S, PLC, wagonPose, applyCfg, applyXray, applyCut, startTour, calcEngineering, addObstacle, scene, camera, renderer, controls, parts, wheelMeshes, driveAnim, openMechView, closeMechView, setLabels, toggleLabels, syncLabels, plcGoto, updateIoPanel, setMode: (m) => { S.mode = m; S.running = m !== 'idle'; } };
 console.info('AutoWagon ready');

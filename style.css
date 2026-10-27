@@ -138,3 +138,16 @@ html[dir=ltr] #mechPanel{left:auto;right:12px}
 }
 #labels.hidden-labels{display:none!important;visibility:hidden!important}
 #labels.hidden-labels .lbl{display:none!important}
+
+/* Live PLC/Pico IO panel */
+.io-panel{position:fixed;left:12px;bottom:12px;z-index:40;background:rgba(255,255,255,.92);
+  border:1px solid #c8ced8;border-radius:12px;padding:10px 12px;min-width:200px;
+  box-shadow:0 8px 24px rgba(30,40,60,.12);font-size:12px;color:#1a2030;backdrop-filter:blur(8px)}
+.io-title{font-weight:700;margin-bottom:4px;opacity:.7}
+.io-state{font-size:16px;font-weight:800;color:#ff7a1a;margin-bottom:8px;font-family:ui-monospace,monospace}
+.io-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px}
+.io-row{display:flex;justify-content:space-between;gap:8px}
+.io-k{opacity:.65}.io-v{font-weight:700;font-family:ui-monospace,monospace}
+.io-v.on{color:#1a8a4a}.io-v.off{color:#888}
+#pbody pre.codeview{direction:ltr;text-align:left;white-space:pre-wrap;font-size:11px;
+  background:#f0f2f6;border-radius:8px;padding:10px;max-height:55vh;overflow:auto;border:1px solid #d0d4dc}
